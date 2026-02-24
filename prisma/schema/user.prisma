@@ -1,0 +1,15 @@
+enum Role {
+    STUDENT
+    TUTOR
+    ADMIN
+}
+
+model User {
+    id        String   @id @default(uuid())
+    email     String   @unique
+    name      String?
+    password  String
+    role      Role     @default(STUDENT)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}

@@ -1,4 +1,4 @@
-enum Role {
+enum UserRole {
     STUDENT
     TUTOR
     ADMIN
@@ -9,7 +9,7 @@ model User {
     email     String   @unique
     name      String?
     password  String
-    role      Role     @default(STUDENT)
+    role      UserRole     @default(STUDENT)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 }

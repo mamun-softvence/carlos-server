@@ -12,7 +12,7 @@ export class JwtStrategy extends PassportStrategy(Strategy){
         private readonly config: ConfigService,
         private readonly prisma: PrismaService
     ){
-        const jwtSecret = config.getOrThrow<string>(ENVEnum.JWT_SECRET);
+        const jwtSecret = config.getOrThrow<string>(ENVEnum.JWT_ACCESS_SECRET);
         super({
             jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
             secretOrKey: jwtSecret

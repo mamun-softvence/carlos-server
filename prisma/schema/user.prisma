@@ -1,15 +1,42 @@
 enum UserRole {
-    STUDENT
-    TUTOR
-    ADMIN
+  STUDENT
+  TUTOR
+  ADMIN
+}
+
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+  FACEBOOK
+  APPLE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
 }
 
 model User {
-    id        String   @id @default(uuid())
-    email     String   @unique
-    name      String?
-    password  String
-    role      UserRole     @default(STUDENT)
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+  id               String       @id @default(uuid())
+  name             String?
+  email            String       @unique
+  password         String?
+  role             UserRole     @default(STUDENT)
+
+  provider         AuthProvider @default(EMAIL)
+  providerId       String?      @unique
+
+  isEmailVerified  Boolean      @default(false)
+  status           UserStatus   @default(ACTIVE)
+  acceptedTerms    Boolean      @default(false)
+
+  refreshToken     String?
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
 }

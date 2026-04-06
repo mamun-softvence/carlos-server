@@ -16,6 +16,9 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { Request, Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { VerifyResetCodeDto } from './dto/verify-reset-code.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -110,5 +113,51 @@ export class AuthController {
     // redirects to Google
   }
 
-  
+  @Get('google/redirect')
+  @UseGuards(AuthGuard('google'))
+  async googleCallback(
+    @Req() req: Request & { user: any },
+    @Res() res: Response,
+  ) {
+    const result = await this.authService.googleLogin(req.user);
+
+    // set cookie
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax',
+    });
+
+    return res.redirect(
+      `http://localhost:3000?accessToken=${result.accessToken}`,
+    );
+  }
+
+  // reset password & code verify
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send password reset code to email' })
+  async forgotPassword(@Body() payload: ForgotPasswordDto) {
+    const result = await this.authService.forgotPassword(payload);
+
+    return successResponse(result, result.message);
+  }
+
+  @Post('verify-reset-code')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify password reset code' })
+  async verifyResetCode(@Body() payload: VerifyResetCodeDto) {
+    const result = await this.authService.verifyResetCode(payload);
+
+    return successResponse(result, result.message);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reset password after code verification' })
+  async resetPassword(@Body() payload: ResetPasswordDto) {
+    const result = await this.authService.resetPassword(payload);
+
+    return successResponse(result, result.message);
+  }
 }

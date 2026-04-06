@@ -33,6 +33,8 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
 
+  app.setGlobalPrefix('api/v1');
+
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 

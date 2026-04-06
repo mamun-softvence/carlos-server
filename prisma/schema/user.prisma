@@ -18,23 +18,27 @@ enum UserStatus {
 }
 
 model User {
-  id               String       @id @default(uuid())
-  name             String?
-  email            String       @unique
-  password         String?
-  role             UserRole     @default(STUDENT)
+  id       String   @id @default(uuid())
+  name     String?
+  email    String   @unique
+  password String?
+  role     UserRole @default(STUDENT)
 
-  provider         AuthProvider @default(EMAIL)
-  providerId       String?      @unique
+  provider   AuthProvider @default(EMAIL)
+  providerId String?      @unique
 
-  isEmailVerified  Boolean      @default(false)
-  status           UserStatus   @default(ACTIVE)
-  acceptedTerms    Boolean      @default(false)
+  isEmailVerified Boolean    @default(false)
+  status          UserStatus @default(ACTIVE)
+  acceptedTerms   Boolean    @default(false)
 
-  refreshToken     String?
+  refreshToken String?
 
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  resetCode       String?
+  resetCodeExpiry DateTime?
+  resetVerified   Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([email])
   @@index([role])

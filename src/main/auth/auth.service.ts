@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -14,6 +15,11 @@ import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './interfaces/jwt-payload.interface';
 import { ENVEnum } from '@/common/enum/env.enum';
 import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { VerifyResetCodeDto } from './dto/verify-reset-code.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { MailService } from '@/common/mail/mail.service';
+import { AuthProvider } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +27,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   async register(payload: RegisterDto) {
@@ -243,5 +250,174 @@ export class AuthService {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
     };
+  }
+
+  async googleLogin(profile: {
+    email: string;
+    name: string;
+    providerId: string;
+  }) {
+    let user = await this.prisma.client.user.findUnique({
+      where: { email: profile.email },
+    });
+
+    if (!user) {
+      user = await this.prisma.client.user.create({
+        data: {
+          email: profile.email,
+          name: profile.name,
+          provider: AuthProvider.GOOGLE,
+          providerId: profile.providerId,
+          isEmailVerified: true,
+          acceptedTerms: true,
+        },
+      });
+    }
+
+    const tokens = await this.generateTokens({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    const hashedRefreshToken = await bcrypt.hash(tokens.refreshToken, 10);
+
+    await this.prisma.client.user.update({
+      where: { id: user.id },
+      data: {
+        refreshToken: hashedRefreshToken,
+      },
+    });
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
+  }
+
+  // forgot password
+  async forgotPassword(payload: ForgotPasswordDto) {
+    const { email } = payload;
+    const user = await this.prisma.client.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      return {
+        message:
+          'If an account exists with this email, a reset code has been sent',
+      };
+    }
+
+    if (user.provider !== AuthProvider.EMAIL) {
+      return {
+        message:
+          'If an account exists with this email, a reset code has been sent',
+      };
+    }
+
+    const code = this.generateSixDigitCode();
+    const hashedCode = await this.hashValue(code);
+
+    const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+
+    await this.prisma.client.user.update({
+      where: { email },
+      data: {
+        resetCode: hashedCode,
+        resetCodeExpiry: expiry,
+        resetVerified: false,
+      },
+    });
+
+    await this.mailService.sendResetCode(email, code);
+    console.log('Sending email to:', email, 'Code:', code);
+
+    return {
+      message:
+        'If an account exists with this email, a reset code has been sent',
+    };
+  }
+
+  // verify reset code
+  async verifyResetCode(payload: VerifyResetCodeDto) {
+    const { email, code } = payload;
+
+    const user = await this.prisma.client.user.findUnique({
+      where: { email },
+    });
+
+    if (!user || !user.resetCode || !user.resetCodeExpiry) {
+      throw new BadRequestException('Invalid or expired reset code');
+    }
+
+    if (user.resetCodeExpiry.getTime() < Date.now()) {
+      throw new BadRequestException('Invalid or expired reset code');
+    }
+
+    const isMatched = await bcrypt.compare(code, user.resetCode);
+
+    if (!isMatched) {
+      throw new BadRequestException('Invalid or expired reset code');
+    }
+
+    await this.prisma.client.user.update({
+      where: { email },
+      data: {
+        resetVerified: true,
+      },
+    });
+
+    return {
+      message: 'Code verified successfully',
+    };
+  }
+
+  // reset password
+  async resetPassword(payload: ResetPasswordDto) {
+    const { email, newPassword, confirmPassword } = payload;
+
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException(
+        'Password and confirm password do not match',
+      );
+    }
+
+    const user = await this.prisma.client.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.resetVerified) {
+      throw new UnauthorizedException('Reset code is not verified');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await this.prisma.client.user.update({
+      where: { email },
+      data: {
+        password: hashedPassword,
+        resetCode: null,
+        resetCodeExpiry: null,
+        resetVerified: false,
+        refreshToken: null,
+      },
+    });
+
+    return {
+      message: 'Password reset successfully',
+    };
+  }
+
+  private generateSixDigitCode() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private async hashValue(value: string) {
+    return bcrypt.hash(value, 10);
   }
 }

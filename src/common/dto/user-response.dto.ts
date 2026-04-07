@@ -16,7 +16,6 @@ export class UserResponseDto {
   @Expose()
   role!: UserRole;
 
-
   // ===== Logout / activity tracking =====
   @Expose()
   lastLoginAt?: Date;

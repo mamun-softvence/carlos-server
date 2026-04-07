@@ -17,12 +17,27 @@ enum UserStatus {
   SUSPENDED
 }
 
+enum BookingStatus {
+  PENDING
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum BookingCreatedBy {
+  STUDENT
+  TUTOR
+  ADMIN
+}
+
 model User {
   id       String   @id @default(uuid())
   name     String?
   email    String   @unique
   password String?
   role     UserRole @default(STUDENT)
+
+  avatarUrl String?
 
   provider   AuthProvider @default(EMAIL)
   providerId String?      @unique
@@ -37,10 +52,52 @@ model User {
   resetCodeExpiry DateTime?
   resetVerified   Boolean   @default(false)
 
+  studentBookings       Booking[] @relation("StudentBookings")
+  tutorBookings         Booking[] @relation("TutorBookings")
+  adminAssignedBookings Booking[] @relation("AdminAssignedBookings")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([email])
   @@index([role])
   @@index([status])
+  @@map("users")
+}
+
+model Booking {
+  id                String           @id @default(uuid())
+  studentId         String
+  tutorId           String?
+  assignedByAdminId String?
+  createdBy         BookingCreatedBy
+  status            BookingStatus    @default(PENDING)
+
+  topic String?
+  note  String?
+
+  requestedDate      DateTime?
+  requestedTimeLabel String?
+
+  scheduledAt     DateTime?
+  durationMinutes Int?
+
+  cancelReason String?
+  cancelledAt  DateTime?
+  completedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student         User  @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor           User? @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin User? @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([assignedByAdminId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([createdBy])
+  @@map("bookings")
 }

@@ -9,12 +9,13 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { successResponse } from 'src/common/utils/response.util';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { Request, Response } from 'express';
+import { CookieOptions, Request, Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { VerifyResetCodeDto } from './dto/verify-reset-code.dto';
@@ -23,7 +24,40 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  private getAuthCookieOptions(): CookieOptions {
+    const isProduction =
+      this.configService.get<string>('NODE_ENV') === 'production';
+
+    return {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      path: '/',
+    };
+  }
+
+  private setAuthCookies(
+    res: Response,
+    accessToken: string,
+    refreshToken: string,
+  ) {
+    const cookieOptions = this.getAuthCookieOptions();
+
+    res.cookie('accessToken', accessToken, {
+      ...cookieOptions,
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    res.cookie('refreshToken', refreshToken, {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+  }
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -34,13 +68,7 @@ export class AuthController {
   ) {
     const result = await this.authService.register(payload);
 
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'none',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
 
     return successResponse(
       {
@@ -61,13 +89,7 @@ export class AuthController {
   ) {
     const result = await this.authService.login(payload);
 
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'none',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
 
     return successResponse(
       {
@@ -90,13 +112,7 @@ export class AuthController {
 
     const result = await this.authService.refreshToken(refreshToken);
 
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'none',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
 
     return successResponse(
       {
@@ -120,17 +136,15 @@ export class AuthController {
     @Res() res: Response,
   ) {
     const result = await this.authService.googleLogin(req.user);
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:5173';
+    const redirectUrl = new URL(frontendUrl);
 
-    // set cookie
-    res.cookie('refreshToken', result.refreshToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-    });
+    redirectUrl.searchParams.set('accessToken', result.accessToken);
 
-    return res.redirect(
-      `http://localhost:3000?accessToken=${result.accessToken}`,
-    );
+    this.setAuthCookies(res, result.accessToken, result.refreshToken);
+
+    return res.redirect(redirectUrl.toString());
   }
 
   // reset password & code verify

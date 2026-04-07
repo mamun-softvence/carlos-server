@@ -11,6 +11,7 @@ async function bootstrap() {
     origin: [
       'http://localhost:3000', // your frontend
       'http://localhost:3001',
+      'http://localhost:5173',
     ],
     credentials: true,
   });
@@ -36,7 +37,7 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('v1/api/docs', app, document);
 
   await app.listen(process.env.PORT ?? 3000);
 }

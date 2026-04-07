@@ -10,6 +10,7 @@ import {
 import { BookingCreatedBy, BookingStatus, UserRole } from '@prisma/client';
 import { StudentCreateBookingRequestDto } from './dto/student-create-booking-request.dto';
 import { AdminAssignTutorDto } from './dto/admin-assign-tutor.dto';
+import { TutorCreateBookingDto } from './dto/tutor-create-booking.dto';
 
 @Injectable()
 export class BookingService {
@@ -165,5 +166,55 @@ export class BookingService {
         data: updated,
       };
     });
+  }
+
+  async tutorCreateBooking(tutorId: string, dto: TutorCreateBookingDto) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+    await this.ensureUserRole(dto.studentId, UserRole.STUDENT);
+
+    const scheduledAt = new Date(dto.scheduledAt);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new BadRequestException('Invalid scheduledAt date');
+    }
+
+    const conflict = await this.prisma.client.booking.findFirst({
+      where: {
+        tutorId,
+        status: BookingStatus.SCHEDULED,
+        scheduledAt,
+      },
+    });
+
+    if (conflict) {
+      throw new BadRequestException(
+        'You already have a scheduled class at this time',
+      );
+    }
+
+    const booking = await this.prisma.client.booking.create({
+      data: {
+        studentId: dto.studentId,
+        tutorId,
+        createdBy: BookingCreatedBy.TUTOR,
+        status: BookingStatus.SCHEDULED,
+        scheduledAt,
+        durationMinutes: dto.durationMinutes,
+        topic: dto.topic,
+        note: dto.note,
+      },
+      include: {
+        student: {
+          select: { id: true, name: true, email: true, avatarUrl: true },
+        },
+        tutor: {
+          select: { id: true, name: true, email: true, avatarUrl: true },
+        },
+      },
+    });
+
+    return {
+      message: 'Class scheduled successfully',
+      data: booking,
+    };
   }
 }

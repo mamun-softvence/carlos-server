@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
-import { BookingService } from './booking.service';
-import { BookingAdminController } from './booking.admin.controller';
-import { BookingTutorController } from './booking.tutor.controller';
-import { BookingStudentController } from './booking.student.controller';
+import { BookingService } from './services/booking.service';
+import { BookingAdminController } from './controllers/booking.admin.controller';
+import { BookingTutorController } from './controllers/booking.tutor.controller';
+import { BookingStudentController } from './controllers/booking.student.controller';
+import { BookingCommonController } from './controllers/booking.common.controller';
 
 @Module({
   providers: [BookingService],
@@ -10,6 +11,7 @@ import { BookingStudentController } from './booking.student.controller';
     BookingAdminController,
     BookingTutorController,
     BookingStudentController,
+    BookingCommonController,
   ],
 })
 export class BookingModule {}

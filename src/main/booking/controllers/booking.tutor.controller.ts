@@ -1,15 +1,16 @@
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
-import { ApiBody } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import { BookingService } from './booking.service';
+import { BookingService } from '../services/booking.service';
 import {
   CurrentUser,
   CurrentUserData,
 } from '@/common/dto/current-user.decorator';
-import { TutorCreateBookingDto } from './dto/tutor-create-booking.dto';
+import { TutorCreateBookingDto } from '../dto/tutor-create-booking.dto';
 
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.TUTOR)
 @Controller('tutor/bookings')

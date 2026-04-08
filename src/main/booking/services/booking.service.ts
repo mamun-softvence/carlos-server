@@ -4,13 +4,14 @@
 import { PrismaService } from '@/lib/prisma/prisma.service';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { BookingCreatedBy, BookingStatus, UserRole } from '@prisma/client';
-import { StudentCreateBookingRequestDto } from './dto/student-create-booking-request.dto';
-import { AdminAssignTutorDto } from './dto/admin-assign-tutor.dto';
-import { TutorCreateBookingDto } from './dto/tutor-create-booking.dto';
+import { StudentCreateBookingRequestDto } from '../dto/student-create-booking-request.dto';
+import { AdminAssignTutorDto } from '../dto/admin-assign-tutor.dto';
+import { TutorCreateBookingDto } from '../dto/tutor-create-booking.dto';
 
 @Injectable()
 export class BookingService {
@@ -215,6 +216,60 @@ export class BookingService {
     return {
       message: 'Class scheduled successfully',
       data: booking,
+    };
+  }
+
+  // Cancle booking
+  async cancelBooking(
+    actorId: string,
+    bookingId: string,
+    actorRole: UserRole,
+    cancelReason?: string,
+  ) {
+    const booking = await this.prisma.client.booking.findUnique({
+      where: { id: bookingId },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new BadRequestException('Booking already cancelled');
+    }
+
+    const isStudentOwner =
+      actorRole === UserRole.STUDENT &&
+      booking.studentId &&
+      booking.studentId === actorId;
+
+    const isTutorOwner =
+      actorRole === UserRole.TUTOR && booking.tutorId === actorId;
+    const isAdmin = actorRole === UserRole.ADMIN;
+
+    if (!isStudentOwner && !isTutorOwner && !isAdmin) {
+      throw new ForbiddenException('You cannot cancel this booking');
+    }
+
+    const updated = await this.prisma.client.booking.update({
+      where: { id: bookingId },
+      data: {
+        status: BookingStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancelReason,
+      },
+      include: {
+        student: {
+          select: { id: true, name: true, email: true, avatarUrl: true },
+        },
+        tutor: {
+          select: { id: true, name: true, email: true, avatarUrl: true },
+        },
+      },
+    });
+    return {
+      message: 'Booking cancelled successfully',
+      data: updated,
     };
   }
 }

@@ -5,11 +5,12 @@ import {
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
 import { Body, Controller, Param, Patch, UseGuards } from '@nestjs/common';
-import { ApiBody } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import { BookingService } from './booking.service';
-import { AdminAssignTutorDto } from './dto/admin-assign-tutor.dto';
+import { BookingService } from '../services/booking.service';
+import { AdminAssignTutorDto } from '../dto/admin-assign-tutor.dto';
 
+@ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
 @Controller('admin/bookings')

@@ -23,6 +23,20 @@ import { AuthProvider } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
+  private readonly userProfileSelect = {
+    id: true,
+    name: true,
+    email: true,
+    role: true,
+    avatarUrl: true,
+    provider: true,
+    isEmailVerified: true,
+    acceptedTerms: true,
+    status: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -59,17 +73,7 @@ export class AuthService {
         password: hashedPassword,
         acceptedTerms,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isEmailVerified: true,
-        acceptedTerms: true,
-        status: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: this.userProfileSelect,
     });
 
     const tokens = await this.generateTokens({
@@ -129,18 +133,14 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    const safeUser = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      provider: user.provider,
-      isEmailVerified: user.isEmailVerified,
-      acceptedTerms: user.acceptedTerms,
-      status: user.status,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    };
+    const safeUser = await this.prisma.client.user.findUnique({
+      where: { id: user.id },
+      select: this.userProfileSelect,
+    });
+
+    if (!safeUser) {
+      throw new UnauthorizedException('User not found');
+    }
 
     const tokens = await this.generateTokens({
       sub: user.id,
@@ -162,6 +162,28 @@ export class AuthService {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
     };
+  }
+
+  async getProfile(userId: string) {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: this.userProfileSelect,
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return user;
+  }
+
+  async logout(userId: string) {
+    await this.prisma.client.user.update({
+      where: { id: userId },
+      data: {
+        refreshToken: null,
+      },
+    });
   }
 
   private async generateTokens(payload: JwtPayload) {

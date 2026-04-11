@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { successResponse } from 'src/common/utils/response.util';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -20,6 +20,11 @@ import { AuthGuard } from '@nestjs/passport';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { VerifyResetCodeDto } from './dto/verify-reset-code.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { JwtAuthGuard } from '@/core/jwt/jwt.guard';
+import {
+  CurrentUser,
+  CurrentUserData,
+} from '@/common/dto/current-user.decorator';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -57,6 +62,13 @@ export class AuthController {
       ...cookieOptions,
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+  }
+
+  private clearAuthCookies(res: Response) {
+    const cookieOptions = this.getAuthCookieOptions();
+
+    res.clearCookie('accessToken', cookieOptions);
+    res.clearCookie('refreshToken', cookieOptions);
   }
 
   @Post('register')
@@ -123,6 +135,21 @@ export class AuthController {
     );
   }
 
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Logout authenticated user' })
+  async logout(
+    @CurrentUser() user: CurrentUserData,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.authService.logout(user.userId);
+    this.clearAuthCookies(res);
+
+    return successResponse({}, 'User logged out successfully');
+  }
+
   @Get('google')
   @UseGuards(AuthGuard('google'))
   async googleLogin() {
@@ -173,5 +200,15 @@ export class AuthController {
     const result = await this.authService.resetPassword(payload);
 
     return successResponse(result, result.message);
+  }
+
+  @Get('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get authenticated user profile' })
+  async getProfile(@CurrentUser() user: CurrentUserData) {
+    const profile = await this.authService.getProfile(user.userId);
+
+    return successResponse(profile, 'Profile fetched successfully');
   }
 }

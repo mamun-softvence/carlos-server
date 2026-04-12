@@ -37,6 +37,7 @@ model User {
   password String?
   role     UserRole @default(STUDENT)
 
+  avatarPublicId String?
   avatarUrl String?
 
   provider   AuthProvider @default(EMAIL)
@@ -100,4 +101,14 @@ model Booking {
   @@index([scheduledAt])
   @@index([createdBy])
   @@map("bookings")
+}
+
+model BookingRule {
+  id                   String   @id @default(uuid())
+  minimumNoticeHours   Int      @default(24)
+  cancellationHours    Int      @default(12)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("booking_rules")
 }

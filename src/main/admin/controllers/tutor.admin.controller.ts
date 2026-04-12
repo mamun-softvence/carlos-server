@@ -1,6 +1,6 @@
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Patch, Post, UseGuards } from '@nestjs/common';
 import { TutorAdminService } from '../services/tutor.admin.service';
 import { CreateTutorDto } from '../dto/create-tutor.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';

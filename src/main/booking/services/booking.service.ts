@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+import { randomUUID } from 'crypto';
 import { PrismaService } from '@/lib/prisma/prisma.service';
 import {
   BadRequestException,
@@ -12,10 +10,73 @@ import { BookingCreatedBy, BookingStatus, UserRole } from '@prisma/client';
 import { StudentCreateBookingRequestDto } from '../dto/student-create-booking-request.dto';
 import { AdminAssignTutorDto } from '../dto/admin-assign-tutor.dto';
 import { TutorCreateBookingDto } from '../dto/tutor-create-booking.dto';
+import { UpdateBookingRuleDto } from '../../admin/dto/update-booking-rule.dto';
+
+type BookingRuleRow = {
+  id: string;
+  minimumNoticeHours: number;
+  cancellationHours: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 @Injectable()
 export class BookingService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async createBookingRule(
+    minimumNoticeHours: number,
+    cancellationHours: number,
+  ) {
+    const id = randomUUID();
+    const now = new Date();
+
+    const createdRules = await this.prisma.client.$queryRaw<BookingRuleRow[]>`
+      INSERT INTO "booking_rules" (
+        "id",
+        "minimumNoticeHours",
+        "cancellationHours",
+        "createdAt",
+        "updatedAt"
+      )
+      VALUES (${id}, ${minimumNoticeHours}, ${cancellationHours}, ${now}, ${now})
+      RETURNING
+        "id",
+        "minimumNoticeHours",
+        "cancellationHours",
+        "createdAt",
+        "updatedAt"
+    `;
+
+    return createdRules[0];
+  }
+
+  private async findBookingRule() {
+    const rules = await this.prisma.client.$queryRaw<BookingRuleRow[]>`
+      SELECT
+        "id",
+        "minimumNoticeHours",
+        "cancellationHours",
+        "createdAt",
+        "updatedAt"
+      FROM "booking_rules"
+      ORDER BY "createdAt" ASC
+      LIMIT 1
+    `;
+
+    return rules[0] ?? null;
+  }
+
+  private async getOrCreateBookingRule() {
+    const existingRule = await this.findBookingRule();
+
+    if (existingRule) {
+      return existingRule;
+    }
+
+    return this.createBookingRule(24, 12);
+  }
+
   private async ensureUserExists(userId: string) {
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId },
@@ -40,6 +101,77 @@ export class BookingService {
     }
 
     return user;
+  }
+
+  async getAllBookings(adminId: string) {
+    await this.ensureUserRole(adminId, UserRole.ADMIN);
+
+    const bookings = await this.prisma.client.booking.findMany({
+      include: {
+        student: {
+          select: { id: true, name: true, email: true, avatarUrl: true },
+        },
+        tutor: {
+          select: { id: true, name: true, email: true, avatarUrl: true },
+        },
+        assignedByAdmin: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return {
+      message: 'All bookings fetched successfully',
+      data: bookings,
+    };
+  }
+
+  async getBookingRule() {
+    const bookingRule = await this.getOrCreateBookingRule();
+
+    return {
+      message: 'Booking rule fetched successfully',
+      data: bookingRule,
+    };
+  }
+
+  async updateBookingRule(adminId: string, dto: UpdateBookingRuleDto) {
+    await this.ensureUserRole(adminId, UserRole.ADMIN);
+
+    const bookingRule = await this.findBookingRule();
+
+    if (!bookingRule) {
+      return {
+        message: 'Booking rule updated successfully',
+        data: await this.createBookingRule(
+          dto.minimumNoticeHours,
+          dto.cancellationHours,
+        ),
+      };
+    }
+
+    const updatedRules = await this.prisma.client.$queryRaw<BookingRuleRow[]>`
+      UPDATE "booking_rules"
+      SET
+        "minimumNoticeHours" = ${dto.minimumNoticeHours},
+        "cancellationHours" = ${dto.cancellationHours},
+        "updatedAt" = NOW()
+      WHERE "id" = ${bookingRule.id}
+      RETURNING
+        "id",
+        "minimumNoticeHours",
+        "cancellationHours",
+        "createdAt",
+        "updatedAt"
+    `;
+
+    return {
+      message: 'Booking rule updated successfully',
+      data: updatedRules[0],
+    };
   }
 
   //   private buildQueryWhere(dto: BookingQueryDto) {

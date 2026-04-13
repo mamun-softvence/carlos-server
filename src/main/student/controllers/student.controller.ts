@@ -4,9 +4,11 @@ import {
 } from '@/common/dto/current-user.decorator';
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { StudentBookingQueryDto } from '../dto/student-booking-query.dto';
+import { UpdateStudentProfileDto } from '../dto/update-student-profile.dto';
 import { StudentService } from '../services/student.service';
 
 @ApiTags('Student')
@@ -18,8 +20,23 @@ export class StudentController {
   constructor(private readonly studentService: StudentService) {}
 
   @Get('bookings')
-  @ApiOperation({ summary: 'Get all bookings for authenticated student' })
-  getMyBookings(@CurrentUser() user: CurrentUserData) {
-    return this.studentService.getMyBookings(user.userId);
+  @ApiOperation({
+    summary:
+      'Get bookings for authenticated student with optional status filter',
+  })
+  getMyBookings(
+    @CurrentUser() user: CurrentUserData,
+    @Query() query: StudentBookingQueryDto,
+  ) {
+    return this.studentService.getMyBookings(user.userId, query);
+  }
+
+  @Patch('profile')
+  @ApiOperation({ summary: 'Update authenticated student profile' })
+  updateProfile(
+    @CurrentUser() user: CurrentUserData,
+    @Body() dto: UpdateStudentProfileDto,
+  ) {
+    return this.studentService.updateProfile(user.userId, dto);
   }
 }

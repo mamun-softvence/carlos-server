@@ -34,6 +34,9 @@ model User {
   id       String   @id @default(uuid())
   name     String?
   email    String   @unique
+  phoneNumber String?
+  timeZone String?
+  googleCalendarEnabled Boolean @default(false)
   password String?
   role     UserRole @default(STUDENT)
 

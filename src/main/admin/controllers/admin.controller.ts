@@ -13,6 +13,12 @@ import { AdminService } from '../services/admin.service';
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
+  @Get('students')
+  @ApiOperation({ summary: 'Get all students' })
+  getAllStudents() {
+    return this.adminService.getAllStudents();
+  }
+
   @Get('tutors')
   @ApiOperation({ summary: 'Get all tutors' })
   getAllTutors() {

@@ -6,6 +6,33 @@ import { UserRole } from '@prisma/client';
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async getAllStudents() {
+    const students = await this.prisma.client.user.findMany({
+      where: {
+        role: UserRole.STUDENT,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        status: true,
+        avatarUrl: true,
+        avatarPublicId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return {
+      message: 'Students fetched successfully',
+      data: students,
+    };
+  }
+
   async getAllTutors() {
     const tutors = await this.prisma.client.user.findMany({
       where: {

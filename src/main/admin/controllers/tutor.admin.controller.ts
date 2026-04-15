@@ -1,27 +1,28 @@
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { Body, Controller, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { TutorAdminService } from '../services/tutor.admin.service';
-import { CreateTutorDto } from '../dto/create-tutor.dto';
+import { CreateAdminUserDto } from '../dto/create-admin-user.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN)
 @ApiTags('Admin')
-@Controller('admin/tutors')
+@Controller('admin/users')
 export class TutorAdminController {
   constructor(private readonly tutorAdminService: TutorAdminService) {}
 
   @ApiBearerAuth()
   @Post()
   @ApiOperation({
-    summary: 'Create tutor',
-    description: 'Admin can create a new tutor account.',
+    summary: 'Create student or tutor',
+    description:
+      'Admin can create a new student or tutor account based on the role field.',
   })
   @ApiBody({
-    type: CreateTutorDto,
-    description: 'Tutor creation payload',
+    type: CreateAdminUserDto,
+    description: 'Student or tutor creation payload',
     examples: {
       tutorExample: {
         summary: 'Create tutor example',
@@ -32,9 +33,18 @@ export class TutorAdminController {
           role: 'TUTOR',
         },
       },
+      studentExample: {
+        summary: 'Create student example',
+        value: {
+          name: 'Jane Doe',
+          email: 'jane@example.com',
+          password: '123456',
+          role: 'STUDENT',
+        },
+      },
     },
   })
-  createTutor(@Body() dto: CreateTutorDto) {
-    return this.tutorAdminService.createTutor(dto);
+  createUser(@Body() dto: CreateAdminUserDto) {
+    return this.tutorAdminService.createUser(dto);
   }
 }

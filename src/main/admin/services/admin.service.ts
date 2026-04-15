@@ -1,27 +1,33 @@
 import { PrismaService } from '@/lib/prisma/prisma.service';
-import { Injectable } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { UserRole, UserStatus } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private readonly userListSelect = {
+    id: true,
+    name: true,
+    email: true,
+    role: true,
+    status: true,
+    avatarUrl: true,
+    avatarPublicId: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
 
   async getAllStudents() {
     const students = await this.prisma.client.user.findMany({
       where: {
         role: UserRole.STUDENT,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        status: true,
-        avatarUrl: true,
-        avatarPublicId: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: this.userListSelect,
       orderBy: {
         createdAt: 'desc',
       },
@@ -38,17 +44,7 @@ export class AdminService {
       where: {
         role: UserRole.TUTOR,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        status: true,
-        avatarUrl: true,
-        avatarPublicId: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: this.userListSelect,
       orderBy: {
         createdAt: 'desc',
       },
@@ -57,6 +53,46 @@ export class AdminService {
     return {
       message: 'Tutors fetched successfully',
       data: tutors,
+    };
+  }
+
+  async updateUserStatus(userId: string, status: UserStatus) {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: this.userListSelect,
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role === UserRole.ADMIN) {
+      throw new BadRequestException(
+        'Admin accounts cannot be updated from this route',
+      );
+    }
+
+    if (![UserRole.STUDENT, UserRole.TUTOR].includes(user.role)) {
+      throw new BadRequestException(
+        'Only student and tutor accounts can be updated from this route',
+      );
+    }
+
+    const updatedUser =
+      user.status === status
+        ? user
+        : await this.prisma.client.user.update({
+            where: { id: userId },
+            data: {
+              status,
+              refreshToken: status === UserStatus.ACTIVE ? undefined : null,
+            },
+            select: this.userListSelect,
+          });
+
+    return {
+      message: `${user.role.toLowerCase()} status updated to ${status.toLowerCase()} successfully`,
+      data: updatedUser,
     };
   }
 }

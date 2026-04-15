@@ -6,7 +6,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BookingCreatedBy, BookingStatus, UserRole } from '@prisma/client';
+import {
+  BookingCreatedBy,
+  BookingStatus,
+  UserRole,
+  UserStatus,
+} from '@prisma/client';
 import { StudentCreateBookingRequestDto } from '../dto/student-create-booking-request.dto';
 import { AdminAssignTutorDto } from '../dto/admin-assign-tutor.dto';
 import { TutorCreateBookingDto } from '../dto/tutor-create-booking.dto';
@@ -86,8 +91,12 @@ export class BookingService {
       throw new NotFoundException('User not found');
     }
 
-    if (!user.status) {
+    if (user.status === UserStatus.INACTIVE) {
       throw new BadRequestException('User is inactive');
+    }
+
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new BadRequestException('User is suspended');
     }
 
     return user;

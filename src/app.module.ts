@@ -9,6 +9,7 @@ import { BookingModule } from './main/booking/booking.module';
 import { UserModule } from './main/user.module';
 import { StudentModule } from './main/student/student.module';
 import { TutorModule } from './main/tutor/tutor.module';
+import { SubscriptionModule } from './main/subscription/subscription.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { TutorModule } from './main/tutor/tutor.module';
     UserModule,
     StudentModule,
     TutorModule,
+    SubscriptionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

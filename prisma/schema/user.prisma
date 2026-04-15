@@ -30,18 +30,26 @@ enum BookingCreatedBy {
   ADMIN
 }
 
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  FAILED
+}
+
 model User {
-  id       String   @id @default(uuid())
-  name     String?
-  email    String   @unique
-  phoneNumber String?
-  timeZone String?
-  googleCalendarEnabled Boolean @default(false)
-  password String?
-  role     UserRole @default(STUDENT)
+  id                    String   @id @default(uuid())
+  name                  String?
+  email                 String   @unique
+  phoneNumber           String?
+  timeZone              String?
+  googleCalendarEnabled Boolean  @default(false)
+  password              String?
+  role                  UserRole @default(STUDENT)
 
   avatarPublicId String?
-  avatarUrl String?
+  avatarUrl      String?
 
   provider   AuthProvider @default(EMAIL)
   providerId String?      @unique
@@ -59,6 +67,10 @@ model User {
   studentBookings       Booking[] @relation("StudentBookings")
   tutorBookings         Booking[] @relation("TutorBookings")
   adminAssignedBookings Booking[] @relation("AdminAssignedBookings")
+
+  studentSubscriptions StudentSubscription[]
+
+  studentCreditBalance StudentCreditBalance[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -107,11 +119,64 @@ model Booking {
 }
 
 model BookingRule {
-  id                   String   @id @default(uuid())
-  minimumNoticeHours   Int      @default(24)
-  cancellationHours    Int      @default(12)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  minimumNoticeHours Int      @default(24)
+  cancellationHours  Int      @default(12)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   @@map("booking_rules")
+}
+
+model SubscriptionPlan {
+  id              String  @id @default(uuid())
+  name            String
+  price           Decimal @db.Decimal(10, 2)
+  durationDays    Int     @default(30)
+  creditsPerMonth Int     @default(0)
+  features        Json
+  isActive        Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studentSubscriptions StudentSubscription[]
+
+  @@map("subscription_plans")
+}
+
+model StudentSubscription {
+  id        String             @id @default(uuid())
+  studentId String
+  planId    String
+  status    SubscriptionStatus @default(PENDING)
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  autoRenew Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([planId])
+  @@index([status])
+  @@map("student_subscriptions")
+}
+
+model StudentCreditBalance {
+  id           String @id @default(uuid())
+  studentId    String @unique
+  totalCredits Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("student_credit_balances")
 }

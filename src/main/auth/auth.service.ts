@@ -19,7 +19,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { VerifyResetCodeDto } from './dto/verify-reset-code.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { MailService } from '@/common/mail/mail.service';
-import { AuthProvider } from '@prisma/client';
+import { AuthProvider, UserStatus } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -43,6 +43,16 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
   ) {}
+
+  private ensureUserCanAuthenticate(status: UserStatus) {
+    if (status === UserStatus.INACTIVE) {
+      throw new ForbiddenException('Your account is inactive');
+    }
+
+    if (status === UserStatus.SUSPENDED) {
+      throw new ForbiddenException('Your account is suspended');
+    }
+  }
 
   async register(payload: RegisterDto) {
     const { email, password, confirmPassword, acceptedTerms } = payload;
@@ -119,13 +129,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    if (user.status === 'INACTIVE') {
-      throw new ForbiddenException('Your account is inactive');
-    }
-
-    if (user.status === 'SUSPENDED') {
-      throw new ForbiddenException('Your account is suspended');
-    }
+    this.ensureUserCanAuthenticate(user.status);
 
     const isPasswordMatched = await bcrypt.compare(password, user.password);
 
@@ -243,6 +247,8 @@ export class AuthService {
     if (!user || !user.refreshToken) {
       throw new UnauthorizedException('Access denied');
     }
+
+    this.ensureUserCanAuthenticate(user.status);
 
     const isTokenValid = await bcrypt.compare(
       oldRefreshToken,

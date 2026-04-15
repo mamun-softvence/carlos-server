@@ -1,11 +1,16 @@
 import { ENVEnum } from '@/common/enum/env.enum';
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JWTPayload } from './jwt.interface';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '@/lib/prisma/prisma.service';
 import { Request } from 'express';
+import { UserStatus } from '@prisma/client';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -33,6 +38,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user) {
       throw new UnauthorizedException('User not found');
     }
-    return payload;
+
+    if (user.status === UserStatus.INACTIVE) {
+      throw new ForbiddenException('Your account is inactive');
+    }
+
+    if (user.status === UserStatus.SUSPENDED) {
+      throw new ForbiddenException('Your account is suspended');
+    }
+
+    return {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    };
   }
 }

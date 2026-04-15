@@ -52,6 +52,7 @@ export class SubscriptionAdminController {
   }
 
   @Get()
+  @Roles(UserRole.ADMIN, UserRole.STUDENT, UserRole.TUTOR)
   @ApiOperation({ summary: 'Get all subscription plans' })
   getSubscriptions() {
     return this.subscriptionAdminService.getSubscriptions();

@@ -31,6 +31,12 @@ export class StudentController {
     return this.studentService.getMyBookings(user.userId, query);
   }
 
+  @Get('credits')
+  @ApiOperation({ summary: 'Get authenticated student credit balance' })
+  getMyCredits(@CurrentUser() user: CurrentUserData) {
+    return this.studentService.getMyCredits(user.userId);
+  }
+
   @Patch('profile')
   @ApiOperation({ summary: 'Update authenticated student profile' })
   updateProfile(

@@ -28,6 +28,39 @@ export class StudentService {
     updatedAt: true,
   } as const;
 
+  async getMyCredits(studentId: string) {
+    const student = await this.prisma.client.user.findFirst({
+      where: {
+        id: studentId,
+        role: UserRole.STUDENT,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    const creditBalance =
+      await this.prisma.client.studentCreditBalance.findUnique({
+        where: {
+          studentId,
+        },
+        select: {
+          totalCredits: true,
+        },
+      });
+
+    return {
+      message: 'Student credit balance fetched successfully',
+      data: {
+        totalCredits: creditBalance?.totalCredits ?? 0,
+      },
+    };
+  }
+
   async getMyBookings(studentId: string, query: StudentBookingQueryDto) {
     const where: Prisma.BookingWhereInput = {
       studentId,

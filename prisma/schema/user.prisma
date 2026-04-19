@@ -1,15 +1,212 @@
 enum UserRole {
-    STUDENT
-    TUTOR
-    ADMIN
+  STUDENT
+  TUTOR
+  ADMIN
+}
+
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+  FACEBOOK
+  APPLE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum BookingStatus {
+  PENDING
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum BookingCreatedBy {
+  STUDENT
+  TUTOR
+  ADMIN
+}
+
+enum LiveClassStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  FAILED
 }
 
 model User {
-    id        String   @id @default(uuid())
-    email     String   @unique
-    name      String?
-    password  String
-    role      UserRole     @default(STUDENT)
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+  id                    String   @id @default(uuid())
+  name                  String?
+  email                 String   @unique
+  phoneNumber           String?
+  timeZone              String?
+  googleCalendarEnabled Boolean  @default(false)
+  password              String?
+  role                  UserRole @default(STUDENT)
+
+  avatarPublicId String?
+  avatarUrl      String?
+
+  provider   AuthProvider @default(EMAIL)
+  providerId String?      @unique
+
+  isEmailVerified Boolean    @default(false)
+  status          UserStatus @default(ACTIVE)
+  acceptedTerms   Boolean    @default(false)
+
+  refreshToken String?
+
+  resetCode       String?
+  resetCodeExpiry DateTime?
+  resetVerified   Boolean   @default(false)
+
+  studentBookings       Booking[] @relation("StudentBookings")
+  tutorBookings         Booking[] @relation("TutorBookings")
+  adminAssignedBookings Booking[] @relation("AdminAssignedBookings")
+  liveClassMessages     LiveClassMessage[]
+
+  studentSubscriptions StudentSubscription[]
+
+  studentCreditBalance StudentCreditBalance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model Booking {
+  id                String           @id @default(uuid())
+  studentId         String
+  tutorId           String?
+  assignedByAdminId String?
+  createdBy         BookingCreatedBy
+  status            BookingStatus    @default(PENDING)
+
+  topic String?
+  note  String?
+
+  requestedDate      DateTime?
+  requestedTimeLabel String?
+
+  scheduledAt     DateTime?
+  durationMinutes Int?
+  courseReference String?
+  moduleReference String?
+  liveClassStatus LiveClassStatus @default(SCHEDULED)
+  startedAt       DateTime?
+  endedAt         DateTime?
+
+  cancelReason String?
+  cancelledAt  DateTime?
+  completedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student         User  @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor           User? @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin User? @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  liveClassMessages LiveClassMessage[]
+
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([assignedByAdminId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([createdBy])
+  @@index([liveClassStatus])
+  @@map("bookings")
+}
+
+model LiveClassMessage {
+  id        String   @id @default(uuid())
+  bookingId String
+  senderId  String
+  message   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  sender  User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+  @@index([senderId])
+  @@map("live_class_messages")
+}
+
+model BookingRule {
+  id                 String   @id @default(uuid())
+  minimumNoticeHours Int      @default(24)
+  cancellationHours  Int      @default(12)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("booking_rules")
+}
+
+model SubscriptionPlan {
+  id              String  @id @default(uuid())
+  name            String
+  price           Decimal @db.Decimal(10, 2)
+  durationDays    Int     @default(30)
+  creditsPerMonth Int     @default(0)
+  features        Json
+  isActive        Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studentSubscriptions StudentSubscription[]
+
+  @@map("subscription_plans")
+}
+
+model StudentSubscription {
+  id        String             @id @default(uuid())
+  studentId String
+  planId    String
+  status    SubscriptionStatus @default(PENDING)
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  autoRenew Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([planId])
+  @@index([status])
+  @@map("student_subscriptions")
+}
+
+model StudentCreditBalance {
+  id           String @id @default(uuid())
+  studentId    String @unique
+  totalCredits Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("student_credit_balances")
 }

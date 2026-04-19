@@ -16,23 +16,12 @@ export class UserResponseDto {
   @Expose()
   role!: UserRole;
 
-
-  // ===== Logout / activity tracking =====
-  @Expose()
-  lastLoginAt?: Date;
-
-  @Expose()
-  lastActiveAt?: Date;
-
   // ===== Avatar =====
   @Expose()
   profilePictureId?: string;
 
   @Expose()
   profilePictureUrl?: string;
-
-  @Expose()
-  avatarUrl?: string;
 
   // ===== Meta =====
   @Expose()

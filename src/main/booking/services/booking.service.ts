@@ -72,7 +72,10 @@ export class BookingService {
     return new Date(scheduledAt.getTime() + durationMinutes * 60 * 1000);
   }
 
-  private toLiveClassResponse(booking: BookingWithParticipants, actorId?: string) {
+  private toLiveClassResponse(
+    booking: BookingWithParticipants,
+    actorId?: string,
+  ) {
     const scheduledEndTime = this.calculateScheduledEndTime(
       booking.scheduledAt,
       booking.durationMinutes,
@@ -213,7 +216,8 @@ export class BookingService {
     actorId: string,
     actorRole: UserRole,
   ) {
-    const isStudent = actorRole === UserRole.STUDENT && booking.studentId === actorId;
+    const isStudent =
+      actorRole === UserRole.STUDENT && booking.studentId === actorId;
     const isTutor = actorRole === UserRole.TUTOR && booking.tutorId === actorId;
     const isAdmin = actorRole === UserRole.ADMIN;
 
@@ -260,17 +264,24 @@ export class BookingService {
     this.assertBookingParticipant(booking, actorId, actorRole);
 
     if (booking.status === BookingStatus.CANCELLED) {
-      throw new BadRequestException('Cancelled bookings cannot be used as live classes');
+      throw new BadRequestException(
+        'Cancelled bookings cannot be used as live classes',
+      );
     }
 
     return booking;
   }
 
-  private async ensureTutorCanManageLiveClass(actorId: string, bookingId: string) {
+  private async ensureTutorCanManageLiveClass(
+    actorId: string,
+    bookingId: string,
+  ) {
     const booking = await this.getBookingOrThrow(bookingId);
 
     if (booking.tutorId !== actorId) {
-      throw new ForbiddenException('Only the assigned teacher can manage this live class');
+      throw new ForbiddenException(
+        'Only the assigned teacher can manage this live class',
+      );
     }
 
     if (!booking.scheduledAt) {
@@ -521,8 +532,7 @@ export class BookingService {
     }
 
     const isStudentOwner =
-      actorRole === UserRole.STUDENT &&
-      booking.studentId === actorId;
+      actorRole === UserRole.STUDENT && booking.studentId === actorId;
 
     const isTutorOwner =
       actorRole === UserRole.TUTOR && booking.tutorId === actorId;
@@ -533,7 +543,7 @@ export class BookingService {
     }
 
     if (booking.liveClassStatus === LiveClassStatus.LIVE) {
-      await this.mediaRoomManager.closeRoom(booking.id);
+      this.mediaRoomManager.closeRoom(booking.id);
     }
 
     const updated = await this.prisma.client.booking.update({
@@ -565,7 +575,11 @@ export class BookingService {
     actorRole: UserRole,
     bookingId: string,
   ) {
-    const booking = await this.getAccessibleLiveClass(actorId, actorRole, bookingId);
+    const booking = await this.getAccessibleLiveClass(
+      actorId,
+      actorRole,
+      bookingId,
+    );
 
     return {
       message: 'Live class fetched successfully',
@@ -607,7 +621,10 @@ export class BookingService {
   }
 
   async startLiveClass(actorId: string, bookingId: string) {
-    const booking = await this.ensureTutorCanManageLiveClass(actorId, bookingId);
+    const booking = await this.ensureTutorCanManageLiveClass(
+      actorId,
+      bookingId,
+    );
 
     if (booking.liveClassStatus === LiveClassStatus.ENDED) {
       throw new BadRequestException('This class has already ended');
@@ -638,7 +655,10 @@ export class BookingService {
   }
 
   async endLiveClass(actorId: string, bookingId: string) {
-    const booking = await this.ensureTutorCanManageLiveClass(actorId, bookingId);
+    const booking = await this.ensureTutorCanManageLiveClass(
+      actorId,
+      bookingId,
+    );
 
     if (booking.liveClassStatus === LiveClassStatus.ENDED) {
       return {
@@ -662,7 +682,7 @@ export class BookingService {
       include: this.bookingInclude,
     });
 
-    await this.mediaRoomManager.closeRoom(bookingId);
+    this.mediaRoomManager.closeRoom(bookingId);
 
     return {
       message: 'Live class ended successfully',
@@ -675,7 +695,11 @@ export class BookingService {
     actorRole: UserRole,
     bookingId: string,
   ) {
-    const booking = await this.getAccessibleLiveClass(actorId, actorRole, bookingId);
+    const booking = await this.getAccessibleLiveClass(
+      actorId,
+      actorRole,
+      bookingId,
+    );
 
     if (booking.liveClassStatus !== LiveClassStatus.LIVE) {
       throw new ForbiddenException('This class is not live yet');
@@ -690,10 +714,16 @@ export class BookingService {
     bookingId: string,
     message: string,
   ) {
-    const booking = await this.getAccessibleLiveClass(actorId, actorRole, bookingId);
+    const booking = await this.getAccessibleLiveClass(
+      actorId,
+      actorRole,
+      bookingId,
+    );
 
     if (booking.liveClassStatus !== LiveClassStatus.LIVE) {
-      throw new ForbiddenException('You can only send messages in a live class');
+      throw new ForbiddenException(
+        'You can only send messages in a live class',
+      );
     }
 
     const trimmedMessage = message.trim();

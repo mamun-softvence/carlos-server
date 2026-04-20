@@ -1,6 +1,12 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import * as mediasoup from 'mediasoup';
 import { UserRole } from '@prisma/client';
+import { PrismaService } from '@/lib/prisma/prisma.service';
 
 type MediasoupWorker = Awaited<ReturnType<typeof mediasoup.createWorker>>;
 type MediasoupRouter = Awaited<ReturnType<MediasoupWorker['createRouter']>>;
@@ -20,18 +26,43 @@ type RouterMediaCodec = {
   channels?: number;
   parameters?: Record<string, unknown>;
 };
-type RtpCapabilities = Parameters<MediasoupRouter['canConsume']>[0]['rtpCapabilities'];
-type DtlsParameters = Parameters<MediasoupWebRtcTransport['connect']>[0]['dtlsParameters'];
+type RtpCapabilities = Parameters<
+  MediasoupRouter['canConsume']
+>[0]['rtpCapabilities'];
+type DtlsParameters = Parameters<
+  MediasoupWebRtcTransport['connect']
+>[0]['dtlsParameters'];
 type ProduceOptions = Parameters<MediasoupWebRtcTransport['produce']>[0];
 type ConsumeOptions = Parameters<MediasoupWebRtcTransport['consume']>[0];
+
+export type LiveClassParticipantUser = {
+  id: string;
+  name: string | null;
+  email: string;
+  avatarUrl: string | null;
+};
+
+export type LiveClassParticipantPresence = {
+  id: string;
+  participantId: string;
+  socketId: string;
+  userId: string;
+  role: UserRole;
+  joinedAt: string;
+  user?: LiveClassParticipantUser;
+};
 
 type MediaPeer = {
   socketId: string;
   userId: string;
   role: UserRole;
+  joinedAt: Date;
+  user?: LiveClassParticipantUser;
   transports: Map<string, MediasoupWebRtcTransport>;
   producers: Map<string, MediasoupProducer>;
   consumers: Map<string, MediasoupConsumer>;
+  consumerMids: Set<string>;
+  nextConsumerMid: number;
 };
 
 type MediaRoom = {
@@ -62,6 +93,8 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
     },
   ];
 
+  constructor(private readonly prisma: PrismaService) {}
+
   async onModuleInit() {
     this.worker = await mediasoup.createWorker({
       rtcMinPort: 40000,
@@ -75,9 +108,9 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async onModuleDestroy() {
+  onModuleDestroy() {
     for (const classSessionId of this.rooms.keys()) {
-      await this.closeRoom(classSessionId);
+      this.closeRoom(classSessionId);
     }
 
     if (this.worker) {
@@ -105,6 +138,48 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
     return { room, peer };
   }
 
+  private async findParticipantUser(userId: string) {
+    return this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatarUrl: true,
+      },
+    });
+  }
+
+  private toParticipant(peer: MediaPeer): LiveClassParticipantPresence {
+    return {
+      id: peer.socketId,
+      participantId: peer.socketId,
+      socketId: peer.socketId,
+      userId: peer.userId,
+      role: peer.role,
+      joinedAt: peer.joinedAt.toISOString(),
+      ...(peer.user ? { user: peer.user } : {}),
+    };
+  }
+
+  private reserveConsumerMid(peer: MediaPeer) {
+    let mid: string;
+
+    do {
+      mid = String(peer.nextConsumerMid);
+      peer.nextConsumerMid += 1;
+    } while (peer.consumerMids.has(mid));
+
+    peer.consumerMids.add(mid);
+    return mid;
+  }
+
+  private releaseConsumerMid(peer: MediaPeer, mid?: string) {
+    if (mid) {
+      peer.consumerMids.delete(mid);
+    }
+  }
+
   async getOrCreateRoom(classSessionId: string) {
     const existingRoom = this.rooms.get(classSessionId);
     if (existingRoom) {
@@ -130,25 +205,32 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
     socketId: string,
     userId: string,
     role: UserRole,
+    user?: LiveClassParticipantUser,
   ) {
     const room = await this.getOrCreateRoom(classSessionId);
     const existingPeer = room.peers.get(socketId);
+    const participantUser = (await this.findParticipantUser(userId)) ?? user;
 
     if (existingPeer) {
-      return existingPeer;
+      existingPeer.user = participantUser ?? existingPeer.user;
+      return this.toParticipant(existingPeer);
     }
 
     const peer: MediaPeer = {
       socketId,
       userId,
       role,
+      joinedAt: new Date(),
+      user: participantUser,
       transports: new Map<string, MediasoupWebRtcTransport>(),
       producers: new Map<string, MediasoupProducer>(),
       consumers: new Map<string, MediasoupConsumer>(),
+      consumerMids: new Set<string>(),
+      nextConsumerMid: 0,
     };
 
     room.peers.set(socketId, peer);
-    return peer;
+    return this.toParticipant(peer);
   }
 
   async createWebRtcTransport(classSessionId: string, socketId: string) {
@@ -160,7 +242,10 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
     }
 
     const transport = await router.createWebRtcTransport({
-      listenInfos: [{ protocol: 'udp', ip: '0.0.0.0' }, { protocol: 'tcp', ip: '0.0.0.0' }],
+      listenInfos: [
+        { protocol: 'udp', ip: '0.0.0.0' },
+        { protocol: 'tcp', ip: '0.0.0.0' },
+      ],
       enableUdp: true,
       enableTcp: true,
       preferUdp: true,
@@ -239,37 +324,58 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
       throw new Error('Transport not found');
     }
 
+    const existingConsumer = Array.from(peer.consumers.values()).find(
+      (consumer) => consumer.producerId === producerId && !consumer.closed,
+    );
+
+    if (existingConsumer) {
+      return existingConsumer;
+    }
+
     if (!room.router.canConsume({ producerId, rtpCapabilities })) {
       throw new Error('The requested producer cannot be consumed');
     }
 
-    const consumer = await transport.consume({
-      producerId,
-      rtpCapabilities,
-      paused: false,
-    } as ConsumeOptions);
+    const mid = this.reserveConsumerMid(peer);
+    let consumer: MediasoupConsumer;
+
+    try {
+      consumer = await transport.consume({
+        producerId,
+        rtpCapabilities,
+        paused: false,
+        mid,
+      } as ConsumeOptions);
+    } catch (error) {
+      this.releaseConsumerMid(peer, mid);
+      throw error;
+    }
 
     peer.consumers.set(consumer.id, consumer);
 
     consumer.on('transportclose', () => {
       peer.consumers.delete(consumer.id);
+      this.releaseConsumerMid(peer, consumer.rtpParameters.mid);
     });
 
     consumer.on('producerclose', () => {
       peer.consumers.delete(consumer.id);
+      this.releaseConsumerMid(peer, consumer.rtpParameters.mid);
       consumer.close();
     });
 
     return consumer;
   }
 
-  async closePeer(classSessionId: string, socketId: string) {
+  closePeer(classSessionId: string, socketId: string) {
     const room = this.rooms.get(classSessionId);
     const peer = room?.peers.get(socketId);
 
     if (!room || !peer) {
-      return;
+      return null;
     }
+
+    const participant = this.toParticipant(peer);
 
     for (const consumer of peer.consumers.values()) {
       consumer.close();
@@ -284,21 +390,25 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
     }
 
     room.peers.delete(socketId);
+    return participant;
   }
 
-  async closeRoom(classSessionId: string) {
+  closeRoom(classSessionId: string) {
     const room = this.rooms.get(classSessionId);
 
     if (!room) {
-      return;
+      return [];
     }
 
-    for (const socketId of room.peers.keys()) {
-      await this.closePeer(classSessionId, socketId);
+    const participants = this.getParticipants(classSessionId);
+
+    for (const socketId of Array.from(room.peers.keys())) {
+      this.closePeer(classSessionId, socketId);
     }
 
     room.router.close();
     this.rooms.delete(classSessionId);
+    return participants;
   }
 
   async getRouterRtpCapabilities(classSessionId: string) {
@@ -313,7 +423,7 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    const producerIds: string[] = [];
+    const producerIds = new Set<string>();
 
     for (const [peerSocketId, peer] of room.peers.entries()) {
       if (socketId && peerSocketId === socketId) {
@@ -321,10 +431,29 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
       }
 
       for (const producer of peer.producers.values()) {
-        producerIds.push(producer.id);
+        producerIds.add(producer.id);
       }
     }
 
-    return producerIds;
+    return Array.from(producerIds);
+  }
+
+  getParticipant(classSessionId: string, socketId: string) {
+    const room = this.rooms.get(classSessionId);
+    const peer = room?.peers.get(socketId);
+
+    return peer ? this.toParticipant(peer) : null;
+  }
+
+  getParticipants(classSessionId: string) {
+    const room = this.rooms.get(classSessionId);
+
+    if (!room) {
+      return [];
+    }
+
+    return Array.from(room.peers.values()).map((peer) =>
+      this.toParticipant(peer),
+    );
   }
 }

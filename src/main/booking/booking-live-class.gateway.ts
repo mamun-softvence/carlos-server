@@ -8,24 +8,30 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Logger, UseFilters } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { UserRole } from '@prisma/client';
 import { BookingService } from './services/booking.service';
 import { LiveClassSocketAuthService } from './services/live-class-socket-auth.service';
-import { MediaRoomManagerService } from './services/media-room-manager.service';
+import {
+  LiveClassParticipantPresence,
+  MediaRoomManagerService,
+} from './services/media-room-manager.service';
 
-type AuthenticatedSocket = Socket & {
-  data: {
-    user?: {
-      userId: string;
-      email: string;
-      role: UserRole;
-      sub: string;
-    };
-    classSessionId?: string;
+type AuthenticatedSocketData = {
+  user?: {
+    userId: string;
+    email: string;
+    role: UserRole;
+    sub: string;
   };
+  classSessionId?: string;
+  statusClassSessionId?: string;
 };
+
+interface AuthenticatedSocket extends Socket {
+  data: AuthenticatedSocketData;
+}
 
 @WebSocketGateway({
   namespace: '/live-classes',
@@ -48,15 +54,22 @@ export class BookingLiveClassGateway
   ) {}
 
   afterInit(server: Server) {
-    server.use(async (socket, next) => {
-      try {
-        const user = await this.socketAuthService.authenticate(socket);
-        (socket as AuthenticatedSocket).data.user = user;
-        next();
-      } catch (error) {
-        next(error as Error);
-      }
+    server.use((socket, next) => {
+      void this.authenticateSocket(socket, next);
     });
+  }
+
+  private async authenticateSocket(
+    socket: Socket,
+    next: (err?: Error) => void,
+  ) {
+    try {
+      const user = await this.socketAuthService.authenticate(socket);
+      (socket as AuthenticatedSocket).data.user = user;
+      next();
+    } catch (error) {
+      next(error as Error);
+    }
   }
 
   handleConnection(client: AuthenticatedSocket) {
@@ -64,14 +77,20 @@ export class BookingLiveClassGateway
   }
 
   async handleDisconnect(client: AuthenticatedSocket) {
-    if (client.data.classSessionId) {
-      await this.mediaRoomManager.closePeer(client.data.classSessionId, client.id);
-      client.leave(this.getSocketRoom(client.data.classSessionId));
+    await this.leaveCurrentClass(client);
+
+    if (client.data.statusClassSessionId) {
+      await client.leave(this.getStatusRoom(client.data.statusClassSessionId));
+      client.data.statusClassSessionId = undefined;
     }
   }
 
   private getSocketRoom(classSessionId: string) {
     return `live-class:${classSessionId}`;
+  }
+
+  private getStatusRoom(classSessionId: string) {
+    return `live-class-status:${classSessionId}`;
   }
 
   private getUserOrThrow(client: AuthenticatedSocket) {
@@ -82,27 +101,131 @@ export class BookingLiveClassGateway
     return client.data.user;
   }
 
+  private toParticipantUser(
+    user: NonNullable<AuthenticatedSocket['data']['user']>,
+  ) {
+    return {
+      id: user.userId,
+      name: null,
+      email: user.email,
+      avatarUrl: null,
+    };
+  }
+
+  private emitClassStatusUpdated(classSessionId: string, liveClass: unknown) {
+    this.server
+      .to(this.getSocketRoom(classSessionId))
+      .to(this.getStatusRoom(classSessionId))
+      .emit('class-status-updated', liveClass);
+  }
+
+  private emitParticipantJoined(
+    classSessionId: string,
+    participant: LiveClassParticipantPresence,
+  ) {
+    this.server
+      .to(this.getSocketRoom(classSessionId))
+      .to(this.getStatusRoom(classSessionId))
+      .emit('participant-joined', {
+        classSessionId,
+        participant,
+      });
+  }
+
+  private emitParticipantLeft(
+    classSessionId: string,
+    participant: LiveClassParticipantPresence,
+  ) {
+    this.server
+      .to(this.getSocketRoom(classSessionId))
+      .to(this.getStatusRoom(classSessionId))
+      .emit('participant-left', {
+        classSessionId,
+        participantId: participant.participantId,
+        userId: participant.userId,
+        socketId: participant.socketId,
+      });
+  }
+
+  private emitParticipantsUpdated(classSessionId: string) {
+    const participants = this.mediaRoomManager.getParticipants(classSessionId);
+
+    this.server
+      .to(this.getSocketRoom(classSessionId))
+      .to(this.getStatusRoom(classSessionId))
+      .emit('participants-updated', {
+        classSessionId,
+        participants,
+      });
+
+    return participants;
+  }
+
+  private async leaveCurrentClass(client: AuthenticatedSocket) {
+    const classSessionId = client.data.classSessionId;
+
+    if (!classSessionId) {
+      return null;
+    }
+
+    const participant = this.mediaRoomManager.closePeer(
+      classSessionId,
+      client.id,
+    );
+
+    await client.leave(this.getSocketRoom(classSessionId));
+    await client.leave(this.getStatusRoom(classSessionId));
+    client.data.classSessionId = undefined;
+
+    if (client.data.statusClassSessionId === classSessionId) {
+      client.data.statusClassSessionId = undefined;
+    }
+
+    if (participant) {
+      this.emitParticipantLeft(classSessionId, participant);
+      this.emitParticipantsUpdated(classSessionId);
+    }
+
+    return {
+      classSessionId,
+      participant,
+    };
+  }
+
   @SubscribeMessage('join-class')
   async joinClass(
     @ConnectedSocket() client: AuthenticatedSocket,
     @MessageBody() payload: { classSessionId: string },
   ) {
     const user = this.getUserOrThrow(client);
+
+    if (
+      client.data.classSessionId &&
+      client.data.classSessionId !== payload.classSessionId
+    ) {
+      await this.leaveCurrentClass(client);
+    }
+
     const liveClass = await this.bookingService.assertCanJoinLiveClass(
       user.userId,
       user.role,
       payload.classSessionId,
     );
 
-    await this.mediaRoomManager.registerPeer(
+    const participant = await this.mediaRoomManager.registerPeer(
       payload.classSessionId,
       client.id,
       user.userId,
       user.role,
+      this.toParticipantUser(user),
     );
 
     client.data.classSessionId = payload.classSessionId;
-    client.join(this.getSocketRoom(payload.classSessionId));
+    await client.join(this.getSocketRoom(payload.classSessionId));
+    await client.join(this.getStatusRoom(payload.classSessionId));
+
+    this.emitParticipantJoined(payload.classSessionId, participant);
+    const participants = this.emitParticipantsUpdated(payload.classSessionId);
 
     return {
       event: 'join-class',
@@ -110,25 +233,84 @@ export class BookingLiveClassGateway
         classSessionId: payload.classSessionId,
         liveClass,
         routerRtpCapabilities:
-          await this.mediaRoomManager.getRouterRtpCapabilities(payload.classSessionId),
-        producerIds: this.mediaRoomManager.getProducerIds(payload.classSessionId, client.id),
+          await this.mediaRoomManager.getRouterRtpCapabilities(
+            payload.classSessionId,
+          ),
+        producerIds: this.mediaRoomManager.getProducerIds(
+          payload.classSessionId,
+          client.id,
+        ),
+        participants,
       },
     };
   }
 
   @SubscribeMessage('leave-class')
   async leaveClass(@ConnectedSocket() client: AuthenticatedSocket) {
-    const classSessionId = client.data.classSessionId;
+    const left = await this.leaveCurrentClass(client);
 
-    if (!classSessionId) {
+    if (!left?.classSessionId) {
       return { event: 'leave-class', data: { left: false } };
     }
 
-    await this.mediaRoomManager.closePeer(classSessionId, client.id);
-    client.leave(this.getSocketRoom(classSessionId));
-    client.data.classSessionId = undefined;
+    return {
+      event: 'leave-class',
+      data: {
+        left: true,
+        classSessionId: left.classSessionId,
+        participant: left.participant,
+      },
+    };
+  }
 
-    return { event: 'leave-class', data: { left: true } };
+  private async watchClass(
+    client: AuthenticatedSocket,
+    payload: { classSessionId: string },
+    event: string,
+  ) {
+    const user = this.getUserOrThrow(client);
+    const liveClass = await this.bookingService.getLiveClassByBookingId(
+      user.userId,
+      user.role,
+      payload.classSessionId,
+    );
+
+    if (
+      client.data.statusClassSessionId &&
+      client.data.statusClassSessionId !== payload.classSessionId
+    ) {
+      await client.leave(this.getStatusRoom(client.data.statusClassSessionId));
+    }
+
+    client.data.statusClassSessionId = payload.classSessionId;
+    await client.join(this.getStatusRoom(payload.classSessionId));
+
+    return {
+      event,
+      data: {
+        classSessionId: payload.classSessionId,
+        liveClass: liveClass.data,
+        participants: this.mediaRoomManager.getParticipants(
+          payload.classSessionId,
+        ),
+      },
+    };
+  }
+
+  @SubscribeMessage('subscribe-class')
+  async subscribeClass(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() payload: { classSessionId: string },
+  ) {
+    return this.watchClass(client, payload, 'subscribe-class');
+  }
+
+  @SubscribeMessage('status-watch')
+  async statusWatch(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() payload: { classSessionId: string },
+  ) {
+    return this.watchClass(client, payload, 'status-watch');
   }
 
   @SubscribeMessage('start-class')
@@ -142,9 +324,7 @@ export class BookingLiveClassGateway
       payload.classSessionId,
     );
 
-    this.server
-      .to(this.getSocketRoom(payload.classSessionId))
-      .emit('class-status-updated', liveClass);
+    this.emitClassStatusUpdated(payload.classSessionId, liveClass);
 
     return { event: 'start-class', data: liveClass };
   }
@@ -160,11 +340,10 @@ export class BookingLiveClassGateway
       payload.classSessionId,
     );
 
-    this.server
-      .to(this.getSocketRoom(payload.classSessionId))
-      .emit('class-status-updated', liveClass);
+    this.emitClassStatusUpdated(payload.classSessionId, liveClass);
 
-    await this.mediaRoomManager.closeRoom(payload.classSessionId);
+    this.mediaRoomManager.closeRoom(payload.classSessionId);
+    this.emitParticipantsUpdated(payload.classSessionId);
     return { event: 'end-class', data: liveClass };
   }
 
@@ -252,9 +431,15 @@ export class BookingLiveClassGateway
       },
     );
 
-    client
-      .to(this.getSocketRoom(payload.classSessionId))
-      .emit('new-producer', { producerId: producer.id, kind: producer.kind });
+    client.to(this.getSocketRoom(payload.classSessionId)).emit('new-producer', {
+      classSessionId: payload.classSessionId,
+      producerId: producer.id,
+      kind: producer.kind,
+      participant: this.mediaRoomManager.getParticipant(
+        payload.classSessionId,
+        client.id,
+      ),
+    });
 
     return {
       event: 'produce',

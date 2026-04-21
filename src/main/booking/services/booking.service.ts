@@ -168,6 +168,45 @@ export class BookingService {
     return this.createBookingRule(24, 12);
   }
 
+  private assertCancellationWindowOpen(
+    booking: { scheduledAt: Date | null },
+    bookingRule: Pick<BookingRuleRow, 'cancellationHours'>,
+  ) {
+    if (!booking.scheduledAt) {
+      return;
+    }
+
+    const cancellationDeadline = new Date(
+      booking.scheduledAt.getTime() -
+        bookingRule.cancellationHours * 60 * 60 * 1000,
+    );
+
+    if (new Date() > cancellationDeadline) {
+      throw new BadRequestException(
+        `Booking cannot be cancelled within ${bookingRule.cancellationHours} hours of the scheduled time`,
+      );
+    }
+  }
+
+  private assertMinimumNotice(
+    requestedAt: Date,
+    bookingRule: Pick<BookingRuleRow, 'minimumNoticeHours'>,
+  ) {
+    if (Number.isNaN(requestedAt.getTime())) {
+      throw new BadRequestException('Invalid booking date');
+    }
+
+    const minimumAllowedTime = new Date(
+      Date.now() + bookingRule.minimumNoticeHours * 60 * 60 * 1000,
+    );
+
+    if (requestedAt < minimumAllowedTime) {
+      throw new BadRequestException(
+        `Booking must be requested at least ${bookingRule.minimumNoticeHours} hours before the scheduled time`,
+      );
+    }
+  }
+
   private async ensureUserExists(userId: string) {
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId },
@@ -196,6 +235,84 @@ export class BookingService {
     }
 
     return user;
+  }
+
+  private async ensureStudentHasCredit(
+    studentId: string,
+    tx: Prisma.TransactionClient | PrismaService['client'] = this.prisma.client,
+  ) {
+    const creditBalance = await tx.studentCreditBalance.findUnique({
+      where: {
+        studentId,
+      },
+      select: {
+        totalCredits: true,
+      },
+    });
+
+    if (!creditBalance || creditBalance.totalCredits < 1) {
+      throw new BadRequestException('Student does not have enough credit');
+    }
+
+    return creditBalance;
+  }
+
+  private async deductStudentCredit(
+    studentId: string,
+    tx: Prisma.TransactionClient,
+  ) {
+    const deducted = await tx.studentCreditBalance.updateMany({
+      where: {
+        studentId,
+        totalCredits: {
+          gte: 1,
+        },
+      },
+      data: {
+        totalCredits: {
+          decrement: 1,
+        },
+      },
+    });
+
+    if (deducted.count === 0) {
+      throw new BadRequestException('Student does not have enough credit');
+    }
+  }
+
+  private async refundBookingCredit(
+    booking: {
+      studentId: string;
+      creditCost: number;
+      creditDeductedAt: Date | null;
+      creditRefundedAt: Date | null;
+    },
+    tx: Prisma.TransactionClient,
+  ) {
+    if (
+      booking.creditCost < 1 ||
+      !booking.creditDeductedAt ||
+      booking.creditRefundedAt
+    ) {
+      return false;
+    }
+
+    await tx.studentCreditBalance.upsert({
+      where: {
+        studentId: booking.studentId,
+      },
+      update: {
+        totalCredits: {
+          increment: booking.creditCost,
+        },
+      },
+      create: {
+        studentId: booking.studentId,
+        totalCredits: booking.creditCost,
+      },
+    });
+
+    return true;
   }
 
   private async getBookingOrThrow(bookingId: string) {
@@ -361,6 +478,16 @@ export class BookingService {
     dto: StudentCreateBookingRequestDto,
   ) {
     await this.ensureUserRole(studentId, UserRole.STUDENT);
+    await this.ensureStudentHasCredit(studentId);
+
+    const requestedDate = dto.requestedDate
+      ? new Date(dto.requestedDate)
+      : null;
+
+    if (requestedDate) {
+      const bookingRule = await this.getOrCreateBookingRule();
+      this.assertMinimumNotice(requestedDate, bookingRule);
+    }
 
     const booking = await this.prisma.client.booking.create({
       data: {
@@ -370,7 +497,7 @@ export class BookingService {
         liveClassStatus: LiveClassStatus.SCHEDULED,
         topic: dto.topic,
         note: dto.note,
-        requestedDate: dto.requestedDate ? new Date(dto.requestedDate) : null,
+        requestedDate,
         requestedTimeLabel: dto.requestedTimeLabel,
       },
       include: {
@@ -434,6 +561,12 @@ export class BookingService {
         );
       }
 
+      const shouldDeductCredit = !booking.creditDeductedAt;
+
+      if (shouldDeductCredit) {
+        await this.deductStudentCredit(booking.studentId, tx);
+      }
+
       const updated = await tx.booking.update({
         where: { id: bookingId },
         data: {
@@ -449,6 +582,10 @@ export class BookingService {
           liveClassStatus: LiveClassStatus.SCHEDULED,
           startedAt: null,
           endedAt: null,
+          creditCost: shouldDeductCredit ? 1 : booking.creditCost,
+          creditDeductedAt: shouldDeductCredit
+            ? new Date()
+            : booking.creditDeductedAt,
         },
         include: this.bookingInclude,
       });
@@ -469,48 +606,57 @@ export class BookingService {
       throw new BadRequestException('Invalid scheduledAt date');
     }
 
-    const conflict = await this.prisma.client.booking.findFirst({
-      where: {
-        tutorId,
-        status: BookingStatus.SCHEDULED,
-        scheduledAt,
-      },
-    });
+    const bookingRule = await this.getOrCreateBookingRule();
+    this.assertMinimumNotice(scheduledAt, bookingRule);
 
-    if (conflict) {
-      throw new BadRequestException(
-        'You already have a scheduled class at this time',
-      );
-    }
-
-    const booking = await this.prisma.client.booking.create({
-      data: {
-        studentId: dto.studentId,
-        tutorId,
-        createdBy: BookingCreatedBy.TUTOR,
-        status: BookingStatus.SCHEDULED,
-        liveClassStatus: LiveClassStatus.SCHEDULED,
-        scheduledAt,
-        durationMinutes: dto.durationMinutes,
-        topic: dto.topic,
-        courseReference: dto.courseReference,
-        moduleReference: dto.moduleReference,
-        note: dto.note,
-      },
-      include: {
-        student: {
-          select: { id: true, name: true, email: true, avatarUrl: true },
+    return this.prisma.client.$transaction(async (tx) => {
+      const conflict = await tx.booking.findFirst({
+        where: {
+          tutorId,
+          status: BookingStatus.SCHEDULED,
+          scheduledAt,
         },
-        tutor: {
-          select: { id: true, name: true, email: true, avatarUrl: true },
-        },
-      },
-    });
+      });
 
-    return {
-      message: 'Class scheduled successfully',
-      data: booking,
-    };
+      if (conflict) {
+        throw new BadRequestException(
+          'You already have a scheduled class at this time',
+        );
+      }
+
+      await this.deductStudentCredit(dto.studentId, tx);
+
+      const booking = await tx.booking.create({
+        data: {
+          studentId: dto.studentId,
+          tutorId,
+          createdBy: BookingCreatedBy.TUTOR,
+          status: BookingStatus.SCHEDULED,
+          liveClassStatus: LiveClassStatus.SCHEDULED,
+          scheduledAt,
+          durationMinutes: dto.durationMinutes,
+          topic: dto.topic,
+          courseReference: dto.courseReference,
+          moduleReference: dto.moduleReference,
+          note: dto.note,
+          creditCost: 1,
+          creditDeductedAt: new Date(),
+        },
+        include: {
+          student: {
+            select: { id: true, name: true, email: true, avatarUrl: true },
+          },
+          tutor: {
+            select: { id: true, name: true, email: true, avatarUrl: true },
+          },
+        },
+      });
+
+      return {
+        message: 'Class scheduled successfully',
+        data: booking,
+      };
+    });
   }
 
   async cancelBooking(
@@ -542,28 +688,53 @@ export class BookingService {
       throw new ForbiddenException('You cannot cancel this booking');
     }
 
+    const bookingRule = await this.getOrCreateBookingRule();
+    this.assertCancellationWindowOpen(booking, bookingRule);
+
     if (booking.liveClassStatus === LiveClassStatus.LIVE) {
       this.mediaRoomManager.closeRoom(booking.id);
     }
 
-    const updated = await this.prisma.client.booking.update({
-      where: { id: bookingId },
-      data: {
-        status: BookingStatus.CANCELLED,
-        liveClassStatus: LiveClassStatus.ENDED,
-        cancelledAt: new Date(),
-        endedAt: booking.endedAt ?? new Date(),
-        cancelReason,
-      },
-      include: {
-        student: {
-          select: { id: true, name: true, email: true, avatarUrl: true },
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      const currentBooking = await tx.booking.findUnique({
+        where: { id: bookingId },
+      });
+
+      if (!currentBooking) {
+        throw new NotFoundException('Booking not found');
+      }
+
+      if (currentBooking.status === BookingStatus.CANCELLED) {
+        throw new BadRequestException('Booking already cancelled');
+      }
+
+      this.assertCancellationWindowOpen(currentBooking, bookingRule);
+
+      const refunded = await this.refundBookingCredit(currentBooking, tx);
+
+      return tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: BookingStatus.CANCELLED,
+          liveClassStatus: LiveClassStatus.ENDED,
+          cancelledAt: new Date(),
+          endedAt: currentBooking.endedAt ?? new Date(),
+          cancelReason,
+          creditRefundedAt: refunded
+            ? new Date()
+            : currentBooking.creditRefundedAt,
         },
-        tutor: {
-          select: { id: true, name: true, email: true, avatarUrl: true },
+        include: {
+          student: {
+            select: { id: true, name: true, email: true, avatarUrl: true },
+          },
+          tutor: {
+            select: { id: true, name: true, email: true, avatarUrl: true },
+          },
         },
-      },
+      });
     });
+
     return {
       message: 'Booking cancelled successfully',
       data: updated,

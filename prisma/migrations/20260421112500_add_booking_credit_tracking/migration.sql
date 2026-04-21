@@ -1,0 +1,4 @@
+ALTER TABLE "bookings"
+ADD COLUMN "creditCost" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN "creditDeductedAt" TIMESTAMP(3),
+ADD COLUMN "creditRefundedAt" TIMESTAMP(3);

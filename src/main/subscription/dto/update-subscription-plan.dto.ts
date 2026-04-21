@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsIn,
   IsNumberString,
   IsObject,
   IsOptional,
@@ -58,4 +59,21 @@ export class UpdateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    example: 'usd',
+    description: 'Stripe currency code',
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiPropertyOptional({
+    example: 'month',
+    enum: ['day', 'week', 'month', 'year'],
+    description: 'Stripe recurring billing interval',
+  })
+  @IsOptional()
+  @IsIn(['day', 'week', 'month', 'year'])
+  billingInterval?: 'day' | 'week' | 'month' | 'year';
 }

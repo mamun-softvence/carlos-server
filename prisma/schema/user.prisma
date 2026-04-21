@@ -38,7 +38,11 @@ enum LiveClassStatus {
 
 enum SubscriptionStatus {
   PENDING
+  INCOMPLETE
   ACTIVE
+  PAST_DUE
+  UNPAID
+  PAUSED
   EXPIRED
   CANCELLED
   FAILED
@@ -66,16 +70,19 @@ model User {
 
   refreshToken String?
 
+  stripeCustomerId String? @unique
+
   resetCode       String?
   resetCodeExpiry DateTime?
   resetVerified   Boolean   @default(false)
 
-  studentBookings       Booking[] @relation("StudentBookings")
-  tutorBookings         Booking[] @relation("TutorBookings")
-  adminAssignedBookings Booking[] @relation("AdminAssignedBookings")
+  studentBookings       Booking[]          @relation("StudentBookings")
+  tutorBookings         Booking[]          @relation("TutorBookings")
+  adminAssignedBookings Booking[]          @relation("AdminAssignedBookings")
   liveClassMessages     LiveClassMessage[]
 
   studentSubscriptions StudentSubscription[]
+  subscriptionPayments StudentSubscriptionPayment[]
 
   studentCreditBalance StudentCreditBalance[]
 
@@ -114,12 +121,16 @@ model Booking {
   cancelledAt  DateTime?
   completedAt  DateTime?
 
+  creditCost       Int       @default(0)
+  creditDeductedAt DateTime?
+  creditRefundedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student         User  @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
-  tutor           User? @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
-  assignedByAdmin User? @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  student           User               @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor             User?              @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin   User?              @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
   liveClassMessages LiveClassMessage[]
 
   @@index([studentId])
@@ -167,10 +178,16 @@ model SubscriptionPlan {
   features        Json
   isActive        Boolean @default(true)
 
+  stripeProductId String? @unique
+  stripePriceId   String? @unique
+  currency        String  @default("usd")
+  billingInterval String  @default("month")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   studentSubscriptions StudentSubscription[]
+  subscriptionPayments StudentSubscriptionPayment[]
 
   @@map("subscription_plans")
 }
@@ -186,16 +203,66 @@ model StudentSubscription {
 
   autoRenew Boolean @default(false)
 
+  stripeCheckoutSessionId String?   @unique
+  stripeSubscriptionId    String?   @unique
+  stripeStatus            String?
+  currentPeriodStart      DateTime?
+  currentPeriodEnd        DateTime?
+  cancelAtPeriodEnd       Boolean   @default(false)
+  canceledAt              DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  student  User                         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan     SubscriptionPlan             @relation(fields: [planId], references: [id], onDelete: Cascade)
+  payments StudentSubscriptionPayment[]
 
   @@index([studentId])
   @@index([planId])
   @@index([status])
+  @@index([stripeSubscriptionId])
   @@map("student_subscriptions")
+}
+
+model StudentSubscriptionPayment {
+  id                    String  @id @default(uuid())
+  studentId             String
+  studentSubscriptionId String?
+  planId                String?
+
+  stripeInvoiceId         String?   @unique
+  stripeCheckoutSessionId String?
+  amountPaid              Int
+  currency                String
+  status                  String
+  paidAt                  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student      User                 @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subscription StudentSubscription? @relation(fields: [studentSubscriptionId], references: [id], onDelete: SetNull)
+  plan         SubscriptionPlan?    @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@index([studentSubscriptionId])
+  @@index([planId])
+  @@map("student_subscription_payments")
+}
+
+model StripeWebhookEvent {
+  id            String    @id @default(uuid())
+  stripeEventId String    @unique
+  type          String
+  payload       Json?
+  processedAt   DateTime?
+  error         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("stripe_webhook_events")
 }
 
 model StudentCreditBalance {

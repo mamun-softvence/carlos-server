@@ -10,6 +10,7 @@ import { UserModule } from './main/user.module';
 import { StudentModule } from './main/student/student.module';
 import { TutorModule } from './main/tutor/tutor.module';
 import { SubscriptionModule } from './main/subscription/subscription.module';
+import { SessionModule } from './main/session/session.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { SubscriptionModule } from './main/subscription/subscription.module';
     StudentModule,
     TutorModule,
     SubscriptionModule,
+    SessionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

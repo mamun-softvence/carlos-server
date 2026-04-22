@@ -18,7 +18,6 @@ import { StudentCreateBookingRequestDto } from '../dto/student-create-booking-re
 import { AdminAssignTutorDto } from '../dto/admin-assign-tutor.dto';
 import { TutorCreateBookingDto } from '../dto/tutor-create-booking.dto';
 import { UpdateBookingRuleDto } from '../../admin/dto/update-booking-rule.dto';
-import { MediaRoomManagerService } from './media-room-manager.service';
 
 type BookingRuleRow = {
   id: string;
@@ -44,10 +43,7 @@ type BookingWithParticipants = Prisma.BookingGetPayload<{
 
 @Injectable()
 export class BookingService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly mediaRoomManager: MediaRoomManagerService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private readonly bookingInclude = {
     student: {
@@ -60,60 +56,6 @@ export class BookingService {
       select: { id: true, name: true, email: true },
     },
   } as const;
-
-  private calculateScheduledEndTime(
-    scheduledAt: Date | null,
-    durationMinutes: number | null,
-  ) {
-    if (!scheduledAt || !durationMinutes) {
-      return null;
-    }
-
-    return new Date(scheduledAt.getTime() + durationMinutes * 60 * 1000);
-  }
-
-  private toLiveClassResponse(
-    booking: BookingWithParticipants,
-    actorId?: string,
-  ) {
-    const scheduledEndTime = this.calculateScheduledEndTime(
-      booking.scheduledAt,
-      booking.durationMinutes,
-    );
-
-    return {
-      id: booking.id,
-      bookingId: booking.id,
-      title: booking.topic,
-      topic: booking.topic,
-      note: booking.note,
-      courseReference: booking.courseReference,
-      moduleReference: booking.moduleReference,
-      startTime: booking.scheduledAt,
-      endTime: scheduledEndTime,
-      durationMinutes: booking.durationMinutes,
-      status: booking.liveClassStatus.toLowerCase(),
-      lifecycleStatus: booking.liveClassStatus,
-      bookingStatus: booking.status,
-      startedAt: booking.startedAt,
-      endedAt: booking.endedAt,
-      canTeacherStart:
-        booking.tutorId === actorId &&
-        booking.status === BookingStatus.SCHEDULED &&
-        booking.liveClassStatus === LiveClassStatus.SCHEDULED,
-      canTeacherEnd:
-        booking.tutorId === actorId &&
-        booking.liveClassStatus === LiveClassStatus.LIVE,
-      canStudentJoin:
-        booking.studentId === actorId &&
-        booking.liveClassStatus === LiveClassStatus.LIVE,
-      student: booking.student,
-      tutor: booking.tutor,
-      assignedByAdmin: booking.assignedByAdmin,
-      createdAt: booking.createdAt,
-      updatedAt: booking.updatedAt,
-    };
-  }
 
   private async createBookingRule(
     minimumNoticeHours: number,
@@ -328,90 +270,6 @@ export class BookingService {
     return booking;
   }
 
-  private assertBookingParticipant(
-    booking: BookingWithParticipants,
-    actorId: string,
-    actorRole: UserRole,
-  ) {
-    const isStudent =
-      actorRole === UserRole.STUDENT && booking.studentId === actorId;
-    const isTutor = actorRole === UserRole.TUTOR && booking.tutorId === actorId;
-    const isAdmin = actorRole === UserRole.ADMIN;
-
-    if (!isStudent && !isTutor && !isAdmin) {
-      throw new ForbiddenException('You do not have access to this class');
-    }
-  }
-
-  private async syncLiveClassState(bookingId: string) {
-    const booking = await this.getBookingOrThrow(bookingId);
-
-    if (booking.status === BookingStatus.CANCELLED) {
-      return booking;
-    }
-
-    const now = new Date();
-    if (
-      booking.liveClassStatus === LiveClassStatus.SCHEDULED &&
-      booking.status === BookingStatus.SCHEDULED &&
-      booking.scheduledAt &&
-      booking.scheduledAt <= now
-    ) {
-      await this.mediaRoomManager.getOrCreateRoom(booking.id);
-
-      return this.prisma.client.booking.update({
-        where: { id: booking.id },
-        data: {
-          liveClassStatus: LiveClassStatus.LIVE,
-          startedAt: booking.startedAt ?? now,
-        },
-        include: this.bookingInclude,
-      });
-    }
-
-    return booking;
-  }
-
-  private async getAccessibleLiveClass(
-    actorId: string,
-    actorRole: UserRole,
-    bookingId: string,
-  ) {
-    const booking = await this.syncLiveClassState(bookingId);
-    this.assertBookingParticipant(booking, actorId, actorRole);
-
-    if (booking.status === BookingStatus.CANCELLED) {
-      throw new BadRequestException(
-        'Cancelled bookings cannot be used as live classes',
-      );
-    }
-
-    return booking;
-  }
-
-  private async ensureTutorCanManageLiveClass(
-    actorId: string,
-    bookingId: string,
-  ) {
-    const booking = await this.getBookingOrThrow(bookingId);
-
-    if (booking.tutorId !== actorId) {
-      throw new ForbiddenException(
-        'Only the assigned teacher can manage this live class',
-      );
-    }
-
-    if (!booking.scheduledAt) {
-      throw new BadRequestException('Class is missing a scheduled start time');
-    }
-
-    if (booking.status === BookingStatus.CANCELLED) {
-      throw new BadRequestException('Cancelled classes cannot be started');
-    }
-
-    return booking;
-  }
-
   async getAllBookings(adminId: string) {
     await this.ensureUserRole(adminId, UserRole.ADMIN);
 
@@ -484,10 +342,10 @@ export class BookingService {
       ? new Date(dto.requestedDate)
       : null;
 
-    if (requestedDate) {
-      const bookingRule = await this.getOrCreateBookingRule();
-      this.assertMinimumNotice(requestedDate, bookingRule);
-    }
+    // if (requestedDate) {
+    //   const bookingRule = await this.getOrCreateBookingRule();
+    //   this.assertMinimumNotice(requestedDate, bookingRule);
+    // }
 
     const booking = await this.prisma.client.booking.create({
       data: {
@@ -691,10 +549,6 @@ export class BookingService {
     const bookingRule = await this.getOrCreateBookingRule();
     this.assertCancellationWindowOpen(booking, bookingRule);
 
-    if (booking.liveClassStatus === LiveClassStatus.LIVE) {
-      this.mediaRoomManager.closeRoom(booking.id);
-    }
-
     const updated = await this.prisma.client.$transaction(async (tx) => {
       const currentBooking = await tx.booking.findUnique({
         where: { id: bookingId },
@@ -738,196 +592,6 @@ export class BookingService {
     return {
       message: 'Booking cancelled successfully',
       data: updated,
-    };
-  }
-
-  async getLiveClassByBookingId(
-    actorId: string,
-    actorRole: UserRole,
-    bookingId: string,
-  ) {
-    const booking = await this.getAccessibleLiveClass(
-      actorId,
-      actorRole,
-      bookingId,
-    );
-
-    return {
-      message: 'Live class fetched successfully',
-      data: this.toLiveClassResponse(booking, actorId),
-    };
-  }
-
-  async getLiveClassMessages(
-    actorId: string,
-    actorRole: UserRole,
-    bookingId: string,
-  ) {
-    await this.getAccessibleLiveClass(actorId, actorRole, bookingId);
-
-    const messages = await this.prisma.client.liveClassMessage.findMany({
-      where: {
-        bookingId,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatarUrl: true,
-            role: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    });
-
-    return {
-      message: 'Live class chat history fetched successfully',
-      data: messages,
-    };
-  }
-
-  async startLiveClass(actorId: string, bookingId: string) {
-    const booking = await this.ensureTutorCanManageLiveClass(
-      actorId,
-      bookingId,
-    );
-
-    if (booking.liveClassStatus === LiveClassStatus.ENDED) {
-      throw new BadRequestException('This class has already ended');
-    }
-
-    if (booking.liveClassStatus === LiveClassStatus.LIVE) {
-      return {
-        message: 'Live class is already active',
-        data: this.toLiveClassResponse(booking, actorId),
-      };
-    }
-
-    await this.mediaRoomManager.getOrCreateRoom(booking.id);
-
-    const updated = await this.prisma.client.booking.update({
-      where: { id: bookingId },
-      data: {
-        liveClassStatus: LiveClassStatus.LIVE,
-        startedAt: booking.startedAt ?? new Date(),
-      },
-      include: this.bookingInclude,
-    });
-
-    return {
-      message: 'Live class started successfully',
-      data: this.toLiveClassResponse(updated, actorId),
-    };
-  }
-
-  async endLiveClass(actorId: string, bookingId: string) {
-    const booking = await this.ensureTutorCanManageLiveClass(
-      actorId,
-      bookingId,
-    );
-
-    if (booking.liveClassStatus === LiveClassStatus.ENDED) {
-      return {
-        message: 'Live class already ended',
-        data: this.toLiveClassResponse(booking, actorId),
-      };
-    }
-
-    const endedAt = new Date();
-    const updated = await this.prisma.client.booking.update({
-      where: { id: bookingId },
-      data: {
-        liveClassStatus: LiveClassStatus.ENDED,
-        endedAt,
-        completedAt: booking.completedAt ?? endedAt,
-        status:
-          booking.status === BookingStatus.CANCELLED
-            ? BookingStatus.CANCELLED
-            : BookingStatus.COMPLETED,
-      },
-      include: this.bookingInclude,
-    });
-
-    this.mediaRoomManager.closeRoom(bookingId);
-
-    return {
-      message: 'Live class ended successfully',
-      data: this.toLiveClassResponse(updated, actorId),
-    };
-  }
-
-  async assertCanJoinLiveClass(
-    actorId: string,
-    actorRole: UserRole,
-    bookingId: string,
-  ) {
-    const booking = await this.getAccessibleLiveClass(
-      actorId,
-      actorRole,
-      bookingId,
-    );
-
-    if (booking.liveClassStatus !== LiveClassStatus.LIVE) {
-      throw new ForbiddenException('This class is not live yet');
-    }
-
-    return this.toLiveClassResponse(booking, actorId);
-  }
-
-  async createLiveClassMessage(
-    actorId: string,
-    actorRole: UserRole,
-    bookingId: string,
-    message: string,
-  ) {
-    const booking = await this.getAccessibleLiveClass(
-      actorId,
-      actorRole,
-      bookingId,
-    );
-
-    if (booking.liveClassStatus !== LiveClassStatus.LIVE) {
-      throw new ForbiddenException(
-        'You can only send messages in a live class',
-      );
-    }
-
-    const trimmedMessage = message.trim();
-    if (!trimmedMessage) {
-      throw new BadRequestException('Message cannot be empty');
-    }
-
-    const createdMessage = await this.prisma.client.liveClassMessage.create({
-      data: {
-        bookingId,
-        senderId: actorId,
-        message: trimmedMessage,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatarUrl: true,
-            role: true,
-          },
-        },
-      },
-    });
-
-    return {
-      id: createdMessage.id,
-      bookingId: createdMessage.bookingId,
-      message: createdMessage.message,
-      sender: createdMessage.sender,
-      createdAt: createdMessage.createdAt,
-      updatedAt: createdMessage.updatedAt,
     };
   }
 }

@@ -76,9 +76,10 @@ model User {
   resetCodeExpiry DateTime?
   resetVerified   Boolean   @default(false)
 
-  studentBookings       Booking[]          @relation("StudentBookings")
-  tutorBookings         Booking[]          @relation("TutorBookings")
-  adminAssignedBookings Booking[]          @relation("AdminAssignedBookings")
+  studentBookings       Booking[]            @relation("StudentBookings")
+  tutorBookings         Booking[]            @relation("TutorBookings")
+  adminAssignedBookings Booking[]            @relation("AdminAssignedBookings")
+  bookingParticipations BookingParticipant[] @relation("StudentBookingParticipants")
   liveClassMessages     LiveClassMessage[]
 
   studentSubscriptions StudentSubscription[]
@@ -128,9 +129,10 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student           User               @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
-  tutor             User?              @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
-  assignedByAdmin   User?              @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  student           User                 @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor             User?                @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin   User?                @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  participants      BookingParticipant[]
   liveClassMessages LiveClassMessage[]
 
   @@index([studentId])
@@ -141,6 +143,22 @@ model Booking {
   @@index([createdBy])
   @@index([liveClassStatus])
   @@map("bookings")
+}
+
+model BookingParticipant {
+  id        String   @id @default(uuid())
+  bookingId String
+  studentId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  student User    @relation("StudentBookingParticipants", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, studentId])
+  @@index([bookingId])
+  @@index([studentId])
+  @@map("booking_participants")
 }
 
 model LiveClassMessage {

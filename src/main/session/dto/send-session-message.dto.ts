@@ -1,8 +1,8 @@
 import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
-export class SendLiveClassMessageDto {
+export class SendSessionMessageDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(2000)
-  message!: string;
+  content!: string;
 }

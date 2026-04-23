@@ -85,7 +85,9 @@ model User {
   studentSubscriptions StudentSubscription[]
   subscriptionPayments StudentSubscriptionPayment[]
 
-  studentCreditBalance StudentCreditBalance[]
+  studentCreditBalance    StudentCreditBalance[]
+  competencyLogsAsStudent StudentLogCompetency[] @relation("StudentCompetencyLogs")
+  competencyLogsAsTutor   StudentLogCompetency[] @relation("TutorCompetencyLogs")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -129,11 +131,12 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student           User                 @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
-  tutor             User?                @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
-  assignedByAdmin   User?                @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  student           User                   @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor             User?                  @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin   User?                  @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
   participants      BookingParticipant[]
   liveClassMessages LiveClassMessage[]
+  competencyLogs    StudentLogCompetency[]
 
   @@index([studentId])
   @@index([tutorId])
@@ -185,6 +188,35 @@ model BookingRule {
   updatedAt          DateTime @updatedAt
 
   @@map("booking_rules")
+}
+
+model StudentLogCompetency {
+  id        String  @id @default(uuid())
+  studentId String
+  tutorId   String
+  bookingId String?
+
+  input        Int @default(0)
+  output       Int @default(0)
+  architecture Int @default(0)
+  lexicon      Int @default(0)
+  dynamics     Int @default(0)
+
+  totalPoints        Int     @default(0)
+  territoryExpansion Decimal @default(0) @db.Decimal(5, 2)
+  feedback           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User     @relation("StudentCompetencyLogs", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor   User     @relation("TutorCompetencyLogs", fields: [tutorId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([bookingId])
+  @@map("student_log_competencies")
 }
 
 model SubscriptionPlan {

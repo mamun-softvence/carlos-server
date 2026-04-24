@@ -36,6 +36,11 @@ enum LiveClassStatus {
   ENDED
 }
 
+enum TaskStatus {
+  PENDING
+  COMPLETE
+}
+
 enum SubscriptionStatus {
   PENDING
   INCOMPLETE
@@ -88,6 +93,8 @@ model User {
   studentCreditBalance    StudentCreditBalance[]
   competencyLogsAsStudent StudentLogCompetency[] @relation("StudentCompetencyLogs")
   competencyLogsAsTutor   StudentLogCompetency[] @relation("TutorCompetencyLogs")
+  assignedTasksAsStudent  Task[]                 @relation("StudentTasks")
+  assignedTasksAsTutor    Task[]                 @relation("TutorTasks")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -190,6 +197,31 @@ model BookingRule {
   @@map("booking_rules")
 }
 
+model Task {
+  id        String     @id @default(uuid())
+  studentId String
+  tutorId   String
+  title     String
+  pdfUrl    String
+  dueDate   DateTime
+  status    TaskStatus @default(PENDING)
+
+  answerPdfUrl String?
+  submittedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User @relation("StudentTasks", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor   User @relation("TutorTasks", fields: [tutorId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
 model StudentLogCompetency {
   id        String  @id @default(uuid())
   studentId String
@@ -213,6 +245,7 @@ model StudentLogCompetency {
   tutor   User     @relation("TutorCompetencyLogs", fields: [tutorId], references: [id], onDelete: Cascade)
   booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
 
+  @@unique([studentId, tutorId])
   @@index([studentId])
   @@index([tutorId])
   @@index([bookingId])

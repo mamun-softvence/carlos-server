@@ -11,6 +11,8 @@ import { StudentModule } from './main/student/student.module';
 import { TutorModule } from './main/tutor/tutor.module';
 import { SubscriptionModule } from './main/subscription/subscription.module';
 import { SessionModule } from './main/session/session.module';
+import { LogModule } from './main/log/log.module';
+import { TaskModule } from './main/task/task.module';
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { SessionModule } from './main/session/session.module';
     TutorModule,
     SubscriptionModule,
     SessionModule,
+    LogModule,
+    TaskModule,
   ],
   controllers: [AppController],
   providers: [AppService],

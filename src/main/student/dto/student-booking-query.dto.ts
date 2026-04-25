@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingStatus } from '@prisma/client';
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional } from 'class-validator';
 
 export class StudentBookingQueryDto {
   @ApiPropertyOptional({
@@ -12,4 +12,13 @@ export class StudentBookingQueryDto {
   @IsOptional()
   @IsEnum(BookingStatus)
   status?: BookingStatus;
+
+  @ApiPropertyOptional({
+    example: '2026-04-25',
+    description:
+      'Filter bookings for a specific date. Pending bookings use requestedDate; scheduled/completed/cancelled bookings use scheduledAt.',
+  })
+  @IsOptional()
+  @IsDateString()
+  date?: string;
 }

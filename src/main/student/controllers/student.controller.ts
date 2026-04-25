@@ -19,6 +19,18 @@ import { StudentService } from '../services/student.service';
 export class StudentController {
   constructor(private readonly studentService: StudentService) {}
 
+  @Get('mydata')
+  @ApiOperation({ summary: 'Get authenticated student dashboard summary' })
+  getMyData(@CurrentUser() user: CurrentUserData) {
+    return this.studentService.getMyData(user.userId);
+  }
+
+  @Get('credit-history')
+  @ApiOperation({ summary: 'Get authenticated student credit history' })
+  getMyCreditHistory(@CurrentUser() user: CurrentUserData) {
+    return this.studentService.getMyCreditHistory(user.userId);
+  }
+
   @Get('overview')
   @ApiOperation({ summary: 'Get authenticated student overview statistics' })
   getMyOverview(@CurrentUser() user: CurrentUserData) {

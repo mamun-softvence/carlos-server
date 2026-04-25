@@ -3,8 +3,10 @@ import { TaskAdminController } from './controllers/task.admin.controller';
 import { TaskStudentController } from './controllers/task.student.controller';
 import { TaskTutorController } from './controllers/task.tutor.controller';
 import { TaskService } from './services/task.service';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
+  imports: [NotificationModule],
   controllers: [
     TaskTutorController,
     TaskStudentController,

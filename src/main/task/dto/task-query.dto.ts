@@ -18,4 +18,12 @@ export class TaskQueryDto {
   @IsOptional()
   @IsUUID()
   studentId?: string;
+
+  @ApiPropertyOptional({
+    example: '97d4ed15-48ab-4e9f-bb46-39561d49513d',
+    description: 'Filter tasks by scheduled booking.',
+  })
+  @IsOptional()
+  @IsUUID()
+  bookingId?: string;
 }

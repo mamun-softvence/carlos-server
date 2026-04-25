@@ -19,6 +19,12 @@ import { StudentService } from '../services/student.service';
 export class StudentController {
   constructor(private readonly studentService: StudentService) {}
 
+  @Get('overview')
+  @ApiOperation({ summary: 'Get authenticated student overview statistics' })
+  getMyOverview(@CurrentUser() user: CurrentUserData) {
+    return this.studentService.getMyOverview(user.userId);
+  }
+
   @Get('bookings')
   @ApiOperation({
     summary:

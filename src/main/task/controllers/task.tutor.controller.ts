@@ -42,11 +42,18 @@ export class TaskTutorController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['studentId', 'title', 'dueDate', 'pdf'],
+      required: ['bookingId', 'studentId', 'title', 'dueDate', 'pdf'],
       properties: {
+        bookingId: {
+          type: 'string',
+          example: '97d4ed15-48ab-4e9f-bb46-39561d49513d',
+          description: 'Scheduled booking this task belongs to',
+        },
         studentId: {
           type: 'string',
           example: '4b572b45-238e-4011-b3e2-da75fb7a0a44',
+          description:
+            'Student in the scheduled booking who receives this task',
         },
         title: {
           type: 'string',

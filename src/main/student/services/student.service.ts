@@ -1,5 +1,5 @@
 import { PrismaService } from '@/lib/prisma/prisma.service';
-import { Prisma, UserRole } from '@prisma/client';
+import { BookingStatus, Prisma, UserRole } from '@prisma/client';
 import {
   ConflictException,
   Injectable,
@@ -27,6 +27,56 @@ export class StudentService {
     createdAt: true,
     updatedAt: true,
   } as const;
+
+  private readonly userSummarySelect = {
+    id: true,
+    name: true,
+    email: true,
+    avatarUrl: true,
+  } as const;
+
+  private readonly bookingInclude = {
+    student: {
+      select: this.userSummarySelect,
+    },
+    tutor: {
+      select: this.userSummarySelect,
+    },
+    assignedByAdmin: {
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    },
+    participants: {
+      select: {
+        student: {
+          select: this.userSummarySelect,
+        },
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    },
+  } satisfies Prisma.BookingInclude;
+
+  private getStudentBookingWhere(studentId: string): Prisma.BookingWhereInput {
+    return {
+      OR: [
+        {
+          studentId,
+        },
+        {
+          participants: {
+            some: {
+              studentId,
+            },
+          },
+        },
+      ],
+    };
+  }
 
   async getMyCredits(studentId: string) {
     const student = await this.prisma.client.user.findFirst({
@@ -61,10 +111,93 @@ export class StudentService {
     };
   }
 
-  async getMyBookings(studentId: string, query: StudentBookingQueryDto) {
-    const where: Prisma.BookingWhereInput = {
-      studentId,
+  async getMyOverview(studentId: string) {
+    const student = await this.prisma.client.user.findFirst({
+      where: {
+        id: studentId,
+        role: UserRole.STUDENT,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+
+    const now = new Date();
+    const studentBookingWhere = this.getStudentBookingWhere(studentId);
+
+    const [completedClass, upcomingClasses, totalCreditSpent, creditBalance] =
+      await Promise.all([
+        this.prisma.client.booking.count({
+          where: {
+            ...studentBookingWhere,
+            status: BookingStatus.COMPLETED,
+          },
+        }),
+        this.prisma.client.booking.count({
+          where: {
+            AND: [
+              studentBookingWhere,
+              {
+                OR: [
+                  {
+                    status: BookingStatus.PENDING,
+                  },
+                  {
+                    status: BookingStatus.SCHEDULED,
+                    OR: [
+                      {
+                        scheduledAt: null,
+                      },
+                      {
+                        scheduledAt: {
+                          gte: now,
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+        this.prisma.client.booking.count({
+          where: {
+            ...studentBookingWhere,
+            creditDeductedAt: {
+              not: null,
+            },
+            creditRefundedAt: null,
+          },
+        }),
+        this.prisma.client.studentCreditBalance.findUnique({
+          where: {
+            studentId,
+          },
+          select: {
+            totalCredits: true,
+          },
+        }),
+      ]);
+
+    const remainingCredit = creditBalance?.totalCredits ?? 0;
+
+    return {
+      message: 'Student overview fetched successfully',
+      data: {
+        completedClass,
+        upcomingClasses,
+        totalCredit: remainingCredit + totalCreditSpent,
+        remainingCredit,
+      },
     };
+  }
+
+  async getMyBookings(studentId: string, query: StudentBookingQueryDto) {
+    const where = this.getStudentBookingWhere(studentId);
 
     if (query.status) {
       where.status = query.status;
@@ -72,31 +205,7 @@ export class StudentService {
 
     const bookings = await this.prisma.client.booking.findMany({
       where,
-      include: {
-        student: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatarUrl: true,
-          },
-        },
-        tutor: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            avatarUrl: true,
-          },
-        },
-        assignedByAdmin: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
+      include: this.bookingInclude,
       orderBy: {
         createdAt: 'desc',
       },

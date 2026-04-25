@@ -6,13 +6,23 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, TaskStatus, UserRole, UserStatus } from '@prisma/client';
+import {
+  BookingStatus,
+  Prisma,
+  TaskStatus,
+  UserRole,
+  UserStatus,
+} from '@prisma/client';
 import { CreateTaskDto } from '../dto/create-task.dto';
 import { TaskQueryDto } from '../dto/task-query.dto';
+import { NotificationService } from '../../notification/services/notification.service';
 
 @Injectable()
 export class TaskService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationService: NotificationService,
+  ) {}
 
   private readonly userSelect = {
     id: true,
@@ -27,6 +37,28 @@ export class TaskService {
     },
     tutor: {
       select: this.userSelect,
+    },
+    booking: {
+      select: {
+        id: true,
+        topic: true,
+        note: true,
+        scheduledAt: true,
+        durationMinutes: true,
+        status: true,
+        studentId: true,
+        tutorId: true,
+        participants: {
+          select: {
+            student: {
+              select: this.userSelect,
+            },
+          },
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+      },
     },
   } satisfies Prisma.TaskInclude;
 
@@ -70,7 +102,58 @@ export class TaskService {
       where.studentId = query.studentId;
     }
 
+    if (query.bookingId) {
+      where.bookingId = query.bookingId;
+    }
+
     return where;
+  }
+
+  private async ensureScheduledBookingCanReceiveTask(
+    tutorId: string,
+    bookingId: string,
+    studentId: string,
+  ) {
+    const booking = await this.prisma.client.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true,
+        tutorId: true,
+        studentId: true,
+        status: true,
+        scheduledAt: true,
+        participants: {
+          select: {
+            studentId: true,
+          },
+        },
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.tutorId !== tutorId) {
+      throw new ForbiddenException('You cannot assign tasks to this booking');
+    }
+
+    if (booking.status !== BookingStatus.SCHEDULED || !booking.scheduledAt) {
+      throw new BadRequestException(
+        'Tasks can only be assigned to scheduled bookings',
+      );
+    }
+
+    const bookingStudentIds = new Set([
+      booking.studentId,
+      ...booking.participants.map((participant) => participant.studentId),
+    ]);
+
+    if (!bookingStudentIds.has(studentId)) {
+      throw new BadRequestException('Student is not part of this booking');
+    }
+
+    return booking;
   }
 
   private assertPdfFile(file: Express.Multer.File | undefined) {
@@ -108,6 +191,11 @@ export class TaskService {
   ) {
     await this.ensureUserRole(tutorId, UserRole.TUTOR);
     await this.ensureUserRole(dto.studentId, UserRole.STUDENT);
+    await this.ensureScheduledBookingCanReceiveTask(
+      tutorId,
+      dto.bookingId,
+      dto.studentId,
+    );
 
     const dueDate = new Date(dto.dueDate);
 
@@ -121,12 +209,25 @@ export class TaskService {
       data: {
         tutorId,
         studentId: dto.studentId,
+        bookingId: dto.bookingId,
         title: dto.title,
         pdfUrl,
         dueDate,
         status: TaskStatus.PENDING,
       },
       include: this.taskInclude,
+    });
+
+    await this.notificationService.createMany([dto.studentId], {
+      type: 'TASK_ASSIGNED',
+      title: 'New task assigned',
+      message: `${task.tutor.name ?? task.tutor.email} assigned you a task: ${task.title}.`,
+      data: {
+        taskId: task.id,
+        bookingId: task.bookingId,
+        tutorId,
+        dueDate: task.dueDate.toISOString(),
+      },
     });
 
     return {
@@ -231,6 +332,17 @@ export class TaskService {
         submittedAt: new Date(),
       },
       include: this.taskInclude,
+    });
+
+    await this.notificationService.createMany([updatedTask.tutorId], {
+      type: 'TASK_SUBMITTED',
+      title: 'Task submitted',
+      message: `${updatedTask.student.name ?? updatedTask.student.email} submitted ${updatedTask.title}.`,
+      data: {
+        taskId: updatedTask.id,
+        bookingId: updatedTask.bookingId,
+        studentId,
+      },
     });
 
     return {

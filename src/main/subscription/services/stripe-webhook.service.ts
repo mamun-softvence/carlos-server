@@ -2,6 +2,7 @@ import { PrismaService } from '@/lib/prisma/prisma.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, SubscriptionStatus } from '@prisma/client';
 import { StripeService } from './stripe.service';
+import { NotificationService } from '../../notification/services/notification.service';
 
 type StripeExpandable = string | { id: string } | null | undefined;
 type StripeMetadata = Record<string, string> | null | undefined;
@@ -68,6 +69,7 @@ export class StripeWebhookService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stripeService: StripeService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async handleEvent(eventPayload: unknown) {
@@ -223,8 +225,8 @@ export class StripeWebhookService {
       this.fromUnix(invoice.status_transitions.paid_at) ?? new Date();
 
     try {
-      await this.prisma.client.$transaction(async (tx) => {
-        await tx.studentSubscriptionPayment.create({
+      const result = await this.prisma.client.$transaction(async (tx) => {
+        const createdPayment = await tx.studentSubscriptionPayment.createMany({
           data: {
             studentId: localSubscription.studentId,
             studentSubscriptionId: localSubscription.id,
@@ -236,6 +238,7 @@ export class StripeWebhookService {
             status: 'paid',
             paidAt,
           },
+          skipDuplicates: true,
         });
 
         await tx.studentSubscription.update({
@@ -255,21 +258,57 @@ export class StripeWebhookService {
           },
         });
 
-        await tx.studentCreditBalance.upsert({
-          where: {
-            studentId: localSubscription.studentId,
-          },
-          update: {
-            totalCredits: {
-              increment: localSubscription.plan.creditsPerMonth,
+        if (createdPayment.count > 0) {
+          await tx.studentCreditBalance.upsert({
+            where: {
+              studentId: localSubscription.studentId,
+            },
+            update: {
+              totalCredits: {
+                increment: localSubscription.plan.creditsPerMonth,
+              },
+            },
+            create: {
+              studentId: localSubscription.studentId,
+              totalCredits: localSubscription.plan.creditsPerMonth,
+            },
+          });
+        }
+
+        return {
+          shouldNotifyEnrollment: createdPayment.count > 0,
+        };
+      });
+
+      if (result.shouldNotifyEnrollment) {
+        await this.notificationService.createMany(
+          [localSubscription.studentId],
+          {
+            type: 'SUBSCRIPTION_ENROLLED',
+            title: 'Subscription enrolled',
+            message: `Your ${localSubscription.plan.name} subscription is active.`,
+            data: {
+              subscriptionId: localSubscription.id,
+              planId: localSubscription.planId,
+              status: this.mapStripeSubscriptionStatus(
+                stripeSubscription.status,
+              ),
             },
           },
-          create: {
+        );
+
+        await this.notificationService.createForAdmins({
+          type: 'STUDENT_SUBSCRIPTION_ENROLLED',
+          title: 'Student subscription enrolled',
+          message: `A student enrolled in ${localSubscription.plan.name}.`,
+          data: {
             studentId: localSubscription.studentId,
-            totalCredits: localSubscription.plan.creditsPerMonth,
+            subscriptionId: localSubscription.id,
+            planId: localSubscription.planId,
+            status: this.mapStripeSubscriptionStatus(stripeSubscription.status),
           },
         });
-      });
+      }
     } catch (error) {
       if (this.isUniqueConstraintError(error)) {
         return;

@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Prisma, SubscriptionStatus, UserRole } from '@prisma/client';
 import { StripeService } from './stripe.service';
+import { NotificationService } from '../../notification/services/notification.service';
 
 type BillingInterval = 'day' | 'week' | 'month' | 'year';
 type StripeExpandable = string | { id: string } | null | undefined;
@@ -56,6 +57,7 @@ export class SubscriptionStudentService {
     private readonly prisma: PrismaService,
     private readonly stripeService: StripeService,
     private readonly configService: ConfigService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async getCurrentSubscription(studentId: string) {
@@ -236,6 +238,12 @@ export class SubscriptionStudentService {
         },
         include: {
           plan: true,
+          student: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
         },
       });
 
@@ -258,6 +266,12 @@ export class SubscriptionStudentService {
         },
         include: {
           plan: true,
+          student: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
         },
       });
 
@@ -296,33 +310,26 @@ export class SubscriptionStudentService {
     const paidAt =
       this.fromUnix(invoice?.status_transitions?.paid_at) ?? new Date();
 
-    const subscription = await this.prisma.client.$transaction(async (tx) => {
+    const result = await this.prisma.client.$transaction(async (tx) => {
       let shouldAddCredits = false;
 
       if (invoice?.id) {
-        const existingPayment = await tx.studentSubscriptionPayment.findUnique({
-          where: {
+        const createdPayment = await tx.studentSubscriptionPayment.createMany({
+          data: {
+            studentId,
+            studentSubscriptionId: localSubscription.id,
+            planId: localSubscription.planId,
             stripeInvoiceId: invoice.id,
+            stripeCheckoutSessionId: sessionId,
+            amountPaid: invoice.amount_paid,
+            currency: invoice.currency,
+            status: invoice.status ?? 'paid',
+            paidAt,
           },
+          skipDuplicates: true,
         });
 
-        if (!existingPayment) {
-          shouldAddCredits = true;
-
-          await tx.studentSubscriptionPayment.create({
-            data: {
-              studentId,
-              studentSubscriptionId: localSubscription.id,
-              planId: localSubscription.planId,
-              stripeInvoiceId: invoice.id,
-              stripeCheckoutSessionId: sessionId,
-              amountPaid: invoice.amount_paid,
-              currency: invoice.currency,
-              status: invoice.status ?? 'paid',
-              paidAt,
-            },
-          });
-        }
+        shouldAddCredits = createdPayment.count > 0;
       }
 
       const updatedSubscription = await tx.studentSubscription.update({
@@ -363,8 +370,38 @@ export class SubscriptionStudentService {
         });
       }
 
-      return updatedSubscription;
+      return {
+        subscription: updatedSubscription,
+        shouldNotifyEnrollment: shouldAddCredits,
+      };
     });
+
+    const { subscription, shouldNotifyEnrollment } = result;
+
+    if (shouldNotifyEnrollment) {
+      await this.notificationService.createMany([studentId], {
+        type: 'SUBSCRIPTION_ENROLLED',
+        title: 'Subscription enrolled',
+        message: `Your ${subscription.plan.name} subscription is active.`,
+        data: {
+          subscriptionId: subscription.id,
+          planId: subscription.planId,
+          status: subscription.status,
+        },
+      });
+
+      await this.notificationService.createForAdmins({
+        type: 'STUDENT_SUBSCRIPTION_ENROLLED',
+        title: 'Student subscription enrolled',
+        message: `${localSubscription.student.name ?? localSubscription.student.email} enrolled in ${subscription.plan.name}.`,
+        data: {
+          studentId,
+          subscriptionId: subscription.id,
+          planId: subscription.planId,
+          status: subscription.status,
+        },
+      });
+    }
 
     return {
       message: 'Checkout session confirmed successfully',

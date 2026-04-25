@@ -13,6 +13,8 @@ import { SubscriptionModule } from './main/subscription/subscription.module';
 import { SessionModule } from './main/session/session.module';
 import { LogModule } from './main/log/log.module';
 import { TaskModule } from './main/task/task.module';
+import { MessageModule } from './main/message/message.module';
+import { NotificationModule } from './main/notification/notification.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { TaskModule } from './main/task/task.module';
     SessionModule,
     LogModule,
     TaskModule,
+    MessageModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

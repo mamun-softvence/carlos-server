@@ -6,8 +6,10 @@ import { SubscriptionAdminService } from './services/subscripton.admin.service';
 import { SubscriptionStudentService } from './services/subscripton.student.service';
 import { StripeWebhookService } from './services/stripe-webhook.service';
 import { StripeService } from './services/stripe.service';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
+  imports: [NotificationModule],
   controllers: [
     SubscriptionAdminController,
     SubscriptionStudentController,

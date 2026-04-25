@@ -3,10 +3,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { BookingStatus, Prisma, UserRole } from '@prisma/client';
 import { AdminStudentLogQueryDto } from '../dto/admin-student-log-query.dto';
 import { UpdateStudentMarkDto } from '../dto/update-student-mark.dto';
+import { NotificationService } from '../../notification/services/notification.service';
 
 @Injectable()
 export class LogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationService: NotificationService,
+  ) {}
 
   private readonly maxScorePerField = 50;
   private readonly maxTotalPoints = this.maxScorePerField * 5;
@@ -308,6 +312,18 @@ export class LogService {
       });
     });
 
+    await this.notificationService.createMany([studentId], {
+      type: 'STUDENT_MARK_UPDATED',
+      title: 'Your log marks were updated',
+      message: 'Your competency log marks have been updated.',
+      data: {
+        studentId,
+        tutorId,
+        logId: studentLog.id,
+        totalPoints: studentLog.totalPoints,
+      },
+    });
+
     return {
       message: 'Student mark saved successfully',
       data: this.formatStudentLog(studentLog),
@@ -368,7 +384,7 @@ export class LogService {
 
     const [
       creditBalance,
-      creditSpentAggregate,
+      totalCreditSpent,
       totalBookings,
       bookingStatusGroups,
       upcomingClassesCount,
@@ -386,16 +402,13 @@ export class LogService {
           totalCredits: true,
         },
       }),
-      this.prisma.client.booking.aggregate({
+      this.prisma.client.booking.count({
         where: {
-          studentId,
+          ...bookingWhere,
           creditDeductedAt: {
             not: null,
           },
           creditRefundedAt: null,
-        },
-        _sum: {
-          creditCost: true,
         },
       }),
       this.prisma.client.booking.count({
@@ -485,7 +498,7 @@ export class LogService {
         profile: student,
         credits: {
           totalCredits: creditBalance?.totalCredits ?? 0,
-          totalCreditSpent: creditSpentAggregate._sum.creditCost ?? 0,
+          totalCreditSpent,
         },
         bookings: {
           totalBookings,

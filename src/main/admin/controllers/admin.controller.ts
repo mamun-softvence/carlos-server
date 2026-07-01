@@ -14,6 +14,12 @@ import { AdminService } from '../services/admin.service';
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
+  @Get('overview')
+  @ApiOperation({ summary: 'Get admin overview statistics' })
+  getOverview() {
+    return this.adminService.getOverview();
+  }
+
   @Get('students')
   @ApiOperation({ summary: 'Get all students' })
   getAllStudents() {

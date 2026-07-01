@@ -36,9 +36,18 @@ enum LiveClassStatus {
   ENDED
 }
 
+enum TaskStatus {
+  PENDING
+  COMPLETE
+}
+
 enum SubscriptionStatus {
   PENDING
+  INCOMPLETE
   ACTIVE
+  PAST_DUE
+  UNPAID
+  PAUSED
   EXPIRED
   CANCELLED
   FAILED
@@ -66,18 +75,29 @@ model User {
 
   refreshToken String?
 
+  stripeCustomerId String? @unique
+
   resetCode       String?
   resetCodeExpiry DateTime?
   resetVerified   Boolean   @default(false)
 
-  studentBookings       Booking[] @relation("StudentBookings")
-  tutorBookings         Booking[] @relation("TutorBookings")
-  adminAssignedBookings Booking[] @relation("AdminAssignedBookings")
+  studentBookings       Booking[]            @relation("StudentBookings")
+  tutorBookings         Booking[]            @relation("TutorBookings")
+  adminAssignedBookings Booking[]            @relation("AdminAssignedBookings")
+  bookingParticipations BookingParticipant[] @relation("StudentBookingParticipants")
   liveClassMessages     LiveClassMessage[]
 
   studentSubscriptions StudentSubscription[]
+  subscriptionPayments StudentSubscriptionPayment[]
 
-  studentCreditBalance StudentCreditBalance[]
+  studentCreditBalance    StudentCreditBalance[]
+  notifications           Notification[]                   @relation("UserNotifications")
+  messageParticipations   MessageConversationParticipant[]
+  sentDirectMessages      DirectMessage[]                  @relation("SentDirectMessages")
+  competencyLogsAsStudent StudentLogCompetency[]           @relation("StudentCompetencyLogs")
+  competencyLogsAsTutor   StudentLogCompetency[]           @relation("TutorCompetencyLogs")
+  assignedTasksAsStudent  Task[]                           @relation("StudentTasks")
+  assignedTasksAsTutor    Task[]                           @relation("TutorTasks")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -114,13 +134,20 @@ model Booking {
   cancelledAt  DateTime?
   completedAt  DateTime?
 
+  creditCost       Int       @default(0)
+  creditDeductedAt DateTime?
+  creditRefundedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student         User  @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
-  tutor           User? @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
-  assignedByAdmin User? @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  student           User                   @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor             User?                  @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin   User?                  @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  participants      BookingParticipant[]
   liveClassMessages LiveClassMessage[]
+  competencyLogs    StudentLogCompetency[]
+  tasks             Task[]
 
   @@index([studentId])
   @@index([tutorId])
@@ -130,6 +157,22 @@ model Booking {
   @@index([createdBy])
   @@index([liveClassStatus])
   @@map("bookings")
+}
+
+model BookingParticipant {
+  id        String   @id @default(uuid())
+  bookingId String
+  studentId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  student User    @relation("StudentBookingParticipants", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, studentId])
+  @@index([bookingId])
+  @@index([studentId])
+  @@map("booking_participants")
 }
 
 model LiveClassMessage {
@@ -148,6 +191,68 @@ model LiveClassMessage {
   @@map("live_class_messages")
 }
 
+model MessageConversation {
+  id             String   @id @default(uuid())
+  participantKey String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  participants MessageConversationParticipant[]
+  messages     DirectMessage[]
+
+  @@map("message_conversations")
+}
+
+model MessageConversationParticipant {
+  id             String   @id @default(uuid())
+  conversationId String
+  userId         String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  conversation MessageConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+  @@map("message_conversation_participants")
+}
+
+model DirectMessage {
+  id             String   @id @default(uuid())
+  conversationId String
+  senderId       String
+  content        String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  conversation MessageConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User                @relation("SentDirectMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@map("direct_messages")
+}
+
+model Notification {
+  id          String    @id @default(uuid())
+  recipientId String
+  type        String
+  title       String
+  message     String
+  data        Json?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  recipient User @relation("UserNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, readAt, createdAt])
+  @@index([type])
+  @@map("notifications")
+}
+
 model BookingRule {
   id                 String   @id @default(uuid())
   minimumNoticeHours Int      @default(24)
@@ -156,6 +261,64 @@ model BookingRule {
   updatedAt          DateTime @updatedAt
 
   @@map("booking_rules")
+}
+
+model Task {
+  id        String     @id @default(uuid())
+  studentId String
+  tutorId   String
+  bookingId String?
+  title     String
+  pdfUrl    String
+  dueDate   DateTime
+  status    TaskStatus @default(PENDING)
+
+  answerPdfUrl String?
+  submittedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User     @relation("StudentTasks", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor   User     @relation("TutorTasks", fields: [tutorId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([bookingId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+model StudentLogCompetency {
+  id        String  @id @default(uuid())
+  studentId String
+  tutorId   String
+  bookingId String?
+
+  input        Int @default(0)
+  output       Int @default(0)
+  architecture Int @default(0)
+  lexicon      Int @default(0)
+  dynamics     Int @default(0)
+
+  totalPoints        Int     @default(0)
+  territoryExpansion Decimal @default(0) @db.Decimal(5, 2)
+  feedback           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student User     @relation("StudentCompetencyLogs", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor   User     @relation("TutorCompetencyLogs", fields: [tutorId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@unique([studentId, tutorId])
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([bookingId])
+  @@map("student_log_competencies")
 }
 
 model SubscriptionPlan {
@@ -167,10 +330,16 @@ model SubscriptionPlan {
   features        Json
   isActive        Boolean @default(true)
 
+  stripeProductId String? @unique
+  stripePriceId   String? @unique
+  currency        String  @default("usd")
+  billingInterval String  @default("month")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   studentSubscriptions StudentSubscription[]
+  subscriptionPayments StudentSubscriptionPayment[]
 
   @@map("subscription_plans")
 }
@@ -186,16 +355,66 @@ model StudentSubscription {
 
   autoRenew Boolean @default(false)
 
+  stripeCheckoutSessionId String?   @unique
+  stripeSubscriptionId    String?   @unique
+  stripeStatus            String?
+  currentPeriodStart      DateTime?
+  currentPeriodEnd        DateTime?
+  cancelAtPeriodEnd       Boolean   @default(false)
+  canceledAt              DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student User             @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  plan    SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  student  User                         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  plan     SubscriptionPlan             @relation(fields: [planId], references: [id], onDelete: Cascade)
+  payments StudentSubscriptionPayment[]
 
   @@index([studentId])
   @@index([planId])
   @@index([status])
+  @@index([stripeSubscriptionId])
   @@map("student_subscriptions")
+}
+
+model StudentSubscriptionPayment {
+  id                    String  @id @default(uuid())
+  studentId             String
+  studentSubscriptionId String?
+  planId                String?
+
+  stripeInvoiceId         String?   @unique
+  stripeCheckoutSessionId String?
+  amountPaid              Int
+  currency                String
+  status                  String
+  paidAt                  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  student      User                 @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subscription StudentSubscription? @relation(fields: [studentSubscriptionId], references: [id], onDelete: SetNull)
+  plan         SubscriptionPlan?    @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  @@index([studentId])
+  @@index([studentSubscriptionId])
+  @@index([planId])
+  @@map("student_subscription_payments")
+}
+
+model StripeWebhookEvent {
+  id            String    @id @default(uuid())
+  stripeEventId String    @unique
+  type          String
+  payload       Json?
+  processedAt   DateTime?
+  error         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("stripe_webhook_events")
 }
 
 model StudentCreditBalance {

@@ -6,18 +6,11 @@ import { BookingAdminController } from './controllers/booking.admin.controller';
 import { BookingTutorController } from './controllers/booking.tutor.controller';
 import { BookingStudentController } from './controllers/booking.student.controller';
 import { BookingCommonController } from './controllers/booking.common.controller';
-import { BookingLiveClassGateway } from './booking-live-class.gateway';
-import { MediaRoomManagerService } from './services/media-room-manager.service';
-import { LiveClassSocketAuthService } from './services/live-class-socket-auth.service';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
-  imports: [ConfigModule, JwtModule.register({})],
-  providers: [
-    BookingService,
-    MediaRoomManagerService,
-    LiveClassSocketAuthService,
-    BookingLiveClassGateway,
-  ],
+  imports: [NotificationModule],
+  providers: [BookingService],
   controllers: [
     BookingAdminController,
     BookingTutorController,

@@ -7,6 +7,7 @@ import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
 import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { ConfirmCheckoutSessionDto } from '../dto/confirm-checkout-session.dto';
 import { TakeStudentSubscriptionDto } from '../dto/take-student-subscription.dto';
 import { SubscriptionStudentService } from '../services/subscripton.student.service';
 
@@ -28,13 +29,13 @@ export class SubscriptionStudentController {
     return this.subscriptionStudentService.getCurrentSubscription(user.userId);
   }
 
-  @Post()
-  @ApiOperation({ summary: 'Take a subscription plan as a student' })
+  @Post('checkout')
+  @ApiOperation({ summary: 'Create Stripe checkout session for subscription' })
   @ApiBody({
     type: TakeStudentSubscriptionDto,
     examples: {
       takeStudentSubscription: {
-        summary: 'Take subscription example',
+        summary: 'Create checkout session example',
         value: {
           planId: '3eaffee1-0a65-4c93-baf8-c34de64713c9',
         },
@@ -48,6 +49,38 @@ export class SubscriptionStudentController {
     return this.subscriptionStudentService.takeSubscription(
       user.userId,
       dto.planId,
+    );
+  }
+
+  @Post()
+  @ApiOperation({
+    summary: 'Create Stripe checkout session for subscription',
+  })
+  @ApiBody({
+    type: TakeStudentSubscriptionDto,
+  })
+  createCheckoutSession(
+    @CurrentUser() user: CurrentUserData,
+    @Body() dto: TakeStudentSubscriptionDto,
+  ) {
+    return this.subscriptionStudentService.takeSubscription(
+      user.userId,
+      dto.planId,
+    );
+  }
+
+  @Post('checkout/confirm')
+  @ApiOperation({ summary: 'Confirm Stripe checkout session after redirect' })
+  @ApiBody({
+    type: ConfirmCheckoutSessionDto,
+  })
+  confirmCheckoutSession(
+    @CurrentUser() user: CurrentUserData,
+    @Body() dto: ConfirmCheckoutSessionDto,
+  ) {
+    return this.subscriptionStudentService.confirmCheckoutSession(
+      user.userId,
+      dto.sessionId,
     );
   }
 }

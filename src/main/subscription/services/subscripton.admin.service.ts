@@ -17,6 +17,8 @@ export class SubscriptionAdminService {
         creditsPerMonth: Number(dto.creditsPerMonth),
         features: dto.features as Prisma.InputJsonValue,
         isActive: dto.isActive ?? true,
+        currency: dto.currency?.toLowerCase() ?? 'usd',
+        billingInterval: dto.billingInterval ?? 'month',
       },
     });
 
@@ -39,6 +41,63 @@ export class SubscriptionAdminService {
     };
   }
 
+  async getSubscriptionHistory() {
+    const [subscriptions, payments] = await Promise.all([
+      this.prisma.client.studentSubscription.findMany({
+        include: {
+          student: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          plan: true,
+          payments: {
+            orderBy: {
+              createdAt: 'desc',
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      this.prisma.client.studentSubscriptionPayment.findMany({
+        include: {
+          student: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          plan: true,
+          subscription: {
+            select: {
+              id: true,
+              status: true,
+              startDate: true,
+              endDate: true,
+              stripeSubscriptionId: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+    ]);
+
+    return {
+      message: 'Subscription history fetched successfully',
+      data: {
+        subscriptions,
+        payments,
+      },
+    };
+  }
+
   async updateSubscription(
     subscriptionId: string,
     dto: UpdateSubscriptionPlanDto,
@@ -50,6 +109,11 @@ export class SubscriptionAdminService {
     if (!existingPlan) {
       throw new NotFoundException('Subscription not found');
     }
+
+    const shouldResetStripePrice = this.shouldResetStripePrice(
+      existingPlan,
+      dto,
+    );
 
     const plan = await this.prisma.client.subscriptionPlan.update({
       where: { id: subscriptionId },
@@ -67,6 +131,9 @@ export class SubscriptionAdminService {
             ? (dto.features as Prisma.InputJsonValue)
             : undefined,
         isActive: dto.isActive,
+        stripePriceId: shouldResetStripePrice ? null : undefined,
+        currency: dto.currency?.toLowerCase(),
+        billingInterval: dto.billingInterval,
       },
     });
 
@@ -92,5 +159,26 @@ export class SubscriptionAdminService {
     return {
       message: 'Subscription deleted successfully',
     };
+  }
+
+  private shouldResetStripePrice(
+    existingPlan: {
+      price: Prisma.Decimal;
+      currency: string;
+      billingInterval: string;
+    },
+    dto: UpdateSubscriptionPlanDto,
+  ) {
+    const priceChanged =
+      dto.price !== undefined &&
+      !new Prisma.Decimal(dto.price).equals(existingPlan.price);
+    const currencyChanged =
+      dto.currency !== undefined &&
+      dto.currency.toLowerCase() !== existingPlan.currency;
+    const intervalChanged =
+      dto.billingInterval !== undefined &&
+      dto.billingInterval !== existingPlan.billingInterval;
+
+    return priceChanged || currencyChanged || intervalChanged;
   }
 }

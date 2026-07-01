@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import * as mediasoup from 'mediasoup';
 import { UserRole } from '@prisma/client';
 
@@ -20,8 +25,12 @@ type RouterMediaCodec = {
   channels?: number;
   parameters?: Record<string, unknown>;
 };
-type RtpCapabilities = Parameters<MediasoupRouter['canConsume']>[0]['rtpCapabilities'];
-type DtlsParameters = Parameters<MediasoupWebRtcTransport['connect']>[0]['dtlsParameters'];
+type RtpCapabilities = Parameters<
+  MediasoupRouter['canConsume']
+>[0]['rtpCapabilities'];
+type DtlsParameters = Parameters<
+  MediasoupWebRtcTransport['connect']
+>[0]['dtlsParameters'];
 type ProduceOptions = Parameters<MediasoupWebRtcTransport['produce']>[0];
 type ConsumeOptions = Parameters<MediasoupWebRtcTransport['consume']>[0];
 
@@ -160,7 +169,10 @@ export class MediaRoomManagerService implements OnModuleInit, OnModuleDestroy {
     }
 
     const transport = await router.createWebRtcTransport({
-      listenInfos: [{ protocol: 'udp', ip: '0.0.0.0' }, { protocol: 'tcp', ip: '0.0.0.0' }],
+      listenInfos: [
+        { protocol: 'udp', ip: '0.0.0.0' },
+        { protocol: 'tcp', ip: '0.0.0.0' },
+      ],
       enableUdp: true,
       enableTcp: true,
       preferUdp: true,

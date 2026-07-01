@@ -19,6 +19,7 @@ import { AdminAssignTutorDto } from '../dto/admin-assign-tutor.dto';
 import { TutorCreateBookingDto } from '../dto/tutor-create-booking.dto';
 import { UpdateBookingRuleDto } from '../../admin/dto/update-booking-rule.dto';
 import { NotificationService } from '../../notification/services/notification.service';
+import { MediaRoomManagerService } from './media-room-manager.service';
 
 type BookingRuleRow = {
   id: string;
@@ -39,6 +40,13 @@ type BookingWithParticipants = Prisma.BookingGetPayload<{
     assignedByAdmin: {
       select: { id: true; name: true; email: true };
     };
+    participants: {
+      select: {
+        student: {
+          select: { id: true; name: true; email: true; avatarUrl: true };
+        };
+      };
+    };
   };
 }>;
 
@@ -47,6 +55,7 @@ export class BookingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
+    private readonly mediaRoomManager: MediaRoomManagerService,
   ) {}
 
   private readonly userSummarySelect = {
@@ -374,6 +383,145 @@ export class BookingService {
     }
 
     return booking;
+  }
+
+  private async syncLiveClassState(bookingId: string) {
+    const booking = await this.getBookingOrThrow(bookingId);
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      return booking;
+    }
+
+    const now = new Date();
+
+    if (
+      booking.liveClassStatus === LiveClassStatus.SCHEDULED &&
+      booking.status === BookingStatus.SCHEDULED &&
+      booking.scheduledAt &&
+      booking.scheduledAt <= now
+    ) {
+      return this.prisma.client.booking.update({
+        where: { id: booking.id },
+        data: {
+          liveClassStatus: LiveClassStatus.LIVE,
+          startedAt: booking.startedAt ?? now,
+        },
+        include: this.bookingInclude,
+      });
+    }
+
+    return booking;
+  }
+
+  private getParticipantStudents(booking: BookingWithParticipants) {
+    const students = new Map<string, (typeof booking.student)>();
+
+    students.set(booking.student.id, booking.student);
+
+    for (const participant of booking.participants) {
+      students.set(participant.student.id, participant.student);
+    }
+
+    return Array.from(students.values());
+  }
+
+  private async getAccessibleLiveClass(
+    actorId: string,
+    actorRole: UserRole,
+    bookingId: string,
+  ) {
+    const booking = await this.syncLiveClassState(bookingId);
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Cancelled bookings cannot be used as live classes',
+      );
+    }
+
+    if (booking.status === BookingStatus.PENDING) {
+      throw new ForbiddenException('This live class is not scheduled yet');
+    }
+
+    if (!booking.tutorId) {
+      throw new ForbiddenException('This live class does not have a tutor yet');
+    }
+
+    const participantStudentIds = new Set(
+      this.getParticipantStudents(booking).map((student) => student.id),
+    );
+
+    const isTutor = actorRole === UserRole.TUTOR && booking.tutorId === actorId;
+    const isStudent =
+      actorRole === UserRole.STUDENT && participantStudentIds.has(actorId);
+    const isAdmin = actorRole === UserRole.ADMIN;
+
+    if (!isTutor && !isStudent && !isAdmin) {
+      throw new ForbiddenException('You do not have access to this live class');
+    }
+
+    return booking;
+  }
+
+  private async ensureTutorCanManageLiveClass(
+    tutorId: string,
+    bookingId: string,
+  ) {
+    const booking = await this.getBookingOrThrow(bookingId);
+
+    if (booking.tutorId !== tutorId) {
+      throw new ForbiddenException(
+        'Only the assigned tutor can manage this live class',
+      );
+    }
+
+    if (!booking.scheduledAt) {
+      throw new BadRequestException(
+        'Live class is missing a scheduled start time',
+      );
+    }
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new BadRequestException('Cancelled live classes cannot be started');
+    }
+
+    return booking;
+  }
+
+  private toLiveClassResponse(
+    booking: BookingWithParticipants,
+    actorId: string,
+  ) {
+    const students = this.getParticipantStudents(booking);
+    const participantRole =
+      booking.tutorId === actorId
+        ? 'tutor'
+        : students.some((student) => student.id === actorId)
+          ? 'student'
+          : 'admin';
+
+    return {
+      classSessionId: booking.id,
+      bookingId: booking.id,
+      title: booking.topic,
+      topic: booking.topic,
+      note: booking.note,
+      courseReference: booking.courseReference,
+      moduleReference: booking.moduleReference,
+      scheduledAt: booking.scheduledAt,
+      durationMinutes: booking.durationMinutes,
+      status: booking.liveClassStatus.toLowerCase(),
+      lifecycleStatus: booking.liveClassStatus,
+      bookingStatus: booking.status,
+      startedAt: booking.startedAt,
+      endedAt: booking.endedAt,
+      tutor: booking.tutor,
+      students,
+      participantRole,
+      allowPublishing: participantRole === 'tutor',
+      allowScreenShare: participantRole === 'tutor',
+      createdAt: booking.createdAt,
+      updatedAt: booking.updatedAt,
+    };
   }
 
   async getAllBookings(adminId: string) {

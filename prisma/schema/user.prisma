@@ -81,11 +81,12 @@ model User {
   resetCodeExpiry DateTime?
   resetVerified   Boolean   @default(false)
 
-  studentBookings       Booking[]            @relation("StudentBookings")
-  tutorBookings         Booking[]            @relation("TutorBookings")
-  adminAssignedBookings Booking[]            @relation("AdminAssignedBookings")
-  bookingParticipations BookingParticipant[] @relation("StudentBookingParticipants")
-  liveClassMessages     LiveClassMessage[]
+  studentBookings        Booking[]               @relation("StudentBookings")
+  tutorBookings          Booking[]               @relation("TutorBookings")
+  adminAssignedBookings  Booking[]               @relation("AdminAssignedBookings")
+  bookingParticipations  BookingParticipant[]    @relation("StudentBookingParticipants")
+  liveClassMessages      LiveClassMessage[]
+  savedLiveClassMessages SavedLiveClassMessage[]
 
   studentSubscriptions StudentSubscription[]
   subscriptionPayments StudentSubscriptionPayment[]
@@ -141,13 +142,15 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student           User                   @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
-  tutor             User?                  @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
-  assignedByAdmin   User?                  @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
-  participants      BookingParticipant[]
-  liveClassMessages LiveClassMessage[]
-  competencyLogs    StudentLogCompetency[]
-  tasks             Task[]
+  student                User                    @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutor                  User?                   @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin        User?                   @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  participants           BookingParticipant[]
+  liveClassMessages      LiveClassMessage[]
+  competencyLogs         StudentLogCompetency[]
+  tasks                  Task[]
+  savedLiveClassMessages SavedLiveClassMessage[]
+  sharedSessionPdfs      SessionSharedPdf[]
 
   @@index([studentId])
   @@index([tutorId])
@@ -183,12 +186,43 @@ model LiveClassMessage {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  sender  User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  booking               Booking                @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  sender                User                   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  savedLiveClassMessage SavedLiveClassMessage?
 
   @@index([bookingId, createdAt])
   @@index([senderId])
   @@map("live_class_messages")
+}
+
+model SavedLiveClassMessage {
+  id        String   @id @default(uuid())
+  bookingId String
+  messageId String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  message LiveClassMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User?            @relation(fields: [userId], references: [id])
+  userId  String?
+
+  @@index([bookingId, createdAt])
+  @@map("saved_live_class_messages")
+}
+
+model SessionSharedPdf {
+  id        String   @id @default(uuid())
+  bookingId String
+  title     String
+  pdfUrl    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+  @@map("session_shared_pdfs")
 }
 
 model MessageConversation {

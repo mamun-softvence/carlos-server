@@ -52,6 +52,8 @@ type BookingWithParticipants = Prisma.BookingGetPayload<{
 
 @Injectable()
 export class BookingService {
+  private static readonly fixedLessonDurationMinutes = 50;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
@@ -175,6 +177,14 @@ export class BookingService {
     if (requestedAt < minimumAllowedTime) {
       throw new BadRequestException(
         `Booking must be requested at least ${bookingRule.minimumNoticeHours} hours before the scheduled time`,
+      );
+    }
+  }
+
+  private assertFixedLessonDuration(durationMinutes: number) {
+    if (durationMinutes !== BookingService.fixedLessonDurationMinutes) {
+      throw new BadRequestException(
+        `Lesson duration must be exactly ${BookingService.fixedLessonDurationMinutes} minutes`,
       );
     }
   }
@@ -414,7 +424,7 @@ export class BookingService {
   }
 
   private getParticipantStudents(booking: BookingWithParticipants) {
-    const students = new Map<string, (typeof booking.student)>();
+    const students = new Map<string, typeof booking.student>();
 
     students.set(booking.student.id, booking.student);
 
@@ -639,6 +649,7 @@ export class BookingService {
   ) {
     await this.ensureUserRole(adminId, UserRole.ADMIN);
     await this.ensureUserRole(dto.tutorId, UserRole.TUTOR);
+    this.assertFixedLessonDuration(dto.durationMinutes);
 
     const updated = await this.prisma.client.$transaction(async (tx) => {
       const booking = await tx.booking.findUnique({
@@ -763,6 +774,7 @@ export class BookingService {
     await this.ensureUserRole(tutorId, UserRole.TUTOR);
     const studentIds = this.getTutorBookingStudentIds(dto);
     await this.ensureStudents(studentIds);
+    this.assertFixedLessonDuration(dto.durationMinutes);
 
     const scheduledAt = new Date(dto.scheduledAt);
     if (Number.isNaN(scheduledAt.getTime())) {
@@ -917,7 +929,11 @@ export class BookingService {
     actorRole: UserRole,
     bookingId: string,
   ) {
-    const booking = await this.getAccessibleLiveClass(actorId, actorRole, bookingId);
+    const booking = await this.getAccessibleLiveClass(
+      actorId,
+      actorRole,
+      bookingId,
+    );
 
     return {
       message: 'Live class fetched successfully',
@@ -959,7 +975,10 @@ export class BookingService {
   }
 
   async startLiveClass(actorId: string, bookingId: string) {
-    const booking = await this.ensureTutorCanManageLiveClass(actorId, bookingId);
+    const booking = await this.ensureTutorCanManageLiveClass(
+      actorId,
+      bookingId,
+    );
 
     if (booking.liveClassStatus === LiveClassStatus.ENDED) {
       throw new BadRequestException('This class has already ended');
@@ -990,7 +1009,10 @@ export class BookingService {
   }
 
   async endLiveClass(actorId: string, bookingId: string) {
-    const booking = await this.ensureTutorCanManageLiveClass(actorId, bookingId);
+    const booking = await this.ensureTutorCanManageLiveClass(
+      actorId,
+      bookingId,
+    );
 
     if (booking.liveClassStatus === LiveClassStatus.ENDED) {
       return {
@@ -1027,7 +1049,11 @@ export class BookingService {
     actorRole: UserRole,
     bookingId: string,
   ) {
-    const booking = await this.getAccessibleLiveClass(actorId, actorRole, bookingId);
+    const booking = await this.getAccessibleLiveClass(
+      actorId,
+      actorRole,
+      bookingId,
+    );
 
     if (booking.liveClassStatus !== LiveClassStatus.LIVE) {
       throw new ForbiddenException('This class is not live yet');
@@ -1042,10 +1068,16 @@ export class BookingService {
     bookingId: string,
     message: string,
   ) {
-    const booking = await this.getAccessibleLiveClass(actorId, actorRole, bookingId);
+    const booking = await this.getAccessibleLiveClass(
+      actorId,
+      actorRole,
+      bookingId,
+    );
 
     if (booking.liveClassStatus !== LiveClassStatus.LIVE) {
-      throw new ForbiddenException('You can only send messages in a live class');
+      throw new ForbiddenException(
+        'You can only send messages in a live class',
+      );
     }
 
     const trimmedMessage = message.trim();

@@ -15,6 +15,7 @@ import { LogModule } from './main/log/log.module';
 import { TaskModule } from './main/task/task.module';
 import { MessageModule } from './main/message/message.module';
 import { NotificationModule } from './main/notification/notification.module';
+import { GoogleCalendarModule } from './main/google-calendar/google-calendar.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { NotificationModule } from './main/notification/notification.module';
     TaskModule,
     MessageModule,
     NotificationModule,
+    GoogleCalendarModule,
   ],
   controllers: [AppController],
   providers: [AppService],

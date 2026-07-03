@@ -20,6 +20,7 @@ import { TutorCreateBookingDto } from '../dto/tutor-create-booking.dto';
 import { UpdateBookingRuleDto } from '../../admin/dto/update-booking-rule.dto';
 import { NotificationService } from '../../notification/services/notification.service';
 import { MediaRoomManagerService } from './media-room-manager.service';
+import { GoogleCalendarService } from '../../google-calendar/google-calendar.service';
 
 type BookingRuleRow = {
   id: string;
@@ -58,6 +59,7 @@ export class BookingService {
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
     private readonly mediaRoomManager: MediaRoomManagerService,
+    private readonly googleCalendarService: GoogleCalendarService,
   ) {}
 
   private readonly userSummarySelect = {
@@ -764,6 +766,8 @@ export class BookingService {
       },
     });
 
+    await this.syncGoogleCalendar(updated.id);
+
     return {
       message: 'Tutor assigned successfully',
       data: updated,
@@ -847,6 +851,8 @@ export class BookingService {
       },
     });
 
+    await this.syncGoogleCalendar(booking.id);
+
     return {
       message: 'Class scheduled successfully',
       data: booking,
@@ -917,6 +923,8 @@ export class BookingService {
         include: this.bookingInclude,
       });
     });
+
+    await this.syncGoogleCalendar(updated.id);
 
     return {
       message: 'Booking cancelled successfully',
@@ -1112,5 +1120,9 @@ export class BookingService {
       createdAt: createdMessage.createdAt,
       updatedAt: createdMessage.updatedAt,
     };
+  }
+
+  private async syncGoogleCalendar(bookingId: string) {
+    await this.googleCalendarService.syncBooking(bookingId);
   }
 }

@@ -60,6 +60,10 @@ model User {
   phoneNumber           String?
   timeZone              String?
   googleCalendarEnabled Boolean  @default(false)
+  googleCalendarEmail   String?
+  googleCalendarAccessToken String?
+  googleCalendarRefreshToken String?
+  googleCalendarTokenExpiry DateTime?
   password              String?
   role                  UserRole @default(STUDENT)
 
@@ -87,6 +91,7 @@ model User {
   bookingParticipations  BookingParticipant[]    @relation("StudentBookingParticipants")
   liveClassMessages      LiveClassMessage[]
   savedLiveClassMessages SavedLiveClassMessage[]
+  googleCalendarBookingEvents GoogleCalendarBookingEvent[]
 
   studentSubscriptions StudentSubscription[]
   subscriptionPayments StudentSubscriptionPayment[]
@@ -151,6 +156,7 @@ model Booking {
   tasks                  Task[]
   savedLiveClassMessages SavedLiveClassMessage[]
   sharedSessionPdfs      SessionSharedPdf[]
+  googleCalendarBookingEvents GoogleCalendarBookingEvent[]
 
   @@index([studentId])
   @@index([tutorId])
@@ -223,6 +229,23 @@ model SessionSharedPdf {
 
   @@index([bookingId, createdAt])
   @@map("session_shared_pdfs")
+}
+
+model GoogleCalendarBookingEvent {
+  id              String   @id @default(uuid())
+  bookingId       String
+  userId          String
+  externalEventId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, userId])
+  @@index([bookingId])
+  @@index([userId])
+  @@map("google_calendar_booking_events")
 }
 
 model MessageConversation {

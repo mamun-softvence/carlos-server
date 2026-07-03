@@ -1,0 +1,10 @@
+#!/bin/sh
+echo "🔍 Running pre-commit checks..."
+
+echo "⚡ Running security scan..."
+node security-scan.js || exit 1
+
+echo "⚡ Running build check..."
+pnpm run build || exit 1
+
+echo "✅ All checks passed!"

@@ -1157,21 +1157,53 @@ export class BookingService {
     await this.googleCalendarService.syncBooking(bookingId);
   }
 
-  // --- Tutor Recurring Schedules & Casual Bookings Helpers ---
-
-  validateRecurringScheduleDays(
-    frequency: RecurringFrequency,
-    dayOfWeek?: number,
-    dayOfMonth?: number,
-  ) {
-    if (frequency === RecurringFrequency.WEEKLY || frequency === RecurringFrequency.BIWEEKLY) {
-      if (dayOfWeek === undefined || dayOfWeek === null) {
-        throw new BadRequestException('dayOfWeek is required for WEEKLY and BIWEEKLY schedules');
-      }
+  private getTemplateOccurrenceDateTime(startDate: Date, frequency: RecurringFrequency, index: number): Date {
+    const date = new Date(startDate);
+    if (frequency === RecurringFrequency.DAILY) {
+      date.setDate(date.getDate() + index);
+    } else if (frequency === RecurringFrequency.WEEKLY) {
+      date.setDate(date.getDate() + index * 7);
+    } else if (frequency === RecurringFrequency.BIWEEKLY) {
+      date.setDate(date.getDate() + index * 14);
+    } else if (frequency === RecurringFrequency.MONTHLY) {
+      date.setMonth(date.getMonth() + index);
     }
-    if (frequency === RecurringFrequency.MONTHLY) {
-      if (dayOfMonth === undefined || dayOfMonth === null) {
-        throw new BadRequestException('dayOfMonth is required for MONTHLY schedules');
+    return date;
+  }
+
+  private getTemplateOccurrenceIndexAfter(startDate: Date, frequency: RecurringFrequency, baseDate: Date): number {
+    const diffMs = baseDate.getTime() - startDate.getTime();
+    if (diffMs <= 0) {
+      return 0;
+    }
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    let estimatedIndex = 0;
+    if (frequency === RecurringFrequency.DAILY) {
+      estimatedIndex = Math.floor(diffDays);
+    } else if (frequency === RecurringFrequency.WEEKLY) {
+      estimatedIndex = Math.floor(diffDays / 7);
+    } else if (frequency === RecurringFrequency.BIWEEKLY) {
+      estimatedIndex = Math.floor(diffDays / 14);
+    } else if (frequency === RecurringFrequency.MONTHLY) {
+      estimatedIndex = Math.floor(diffDays / 30.44);
+    }
+    return Math.max(0, estimatedIndex - 1);
+  }
+
+  private getTemplateNextOccurrence(
+    frequency: RecurringFrequency,
+    startDate: Date,
+    baseDate: Date,
+  ): Date {
+    let i = this.getTemplateOccurrenceIndexAfter(startDate, frequency, baseDate);
+    while (true) {
+      const occurrence = this.getTemplateOccurrenceDateTime(startDate, frequency, i);
+      if (occurrence > baseDate) {
+        return occurrence;
+      }
+      i++;
+      if (i > 100000) {
+        return occurrence;
       }
     }
   }
@@ -1186,7 +1218,6 @@ export class BookingService {
     const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
 
     // 1. Check existing non-cancelled bookings for overlap
-    // Fetch all bookings within a +/- 24h range to handle same-day checks cleanly
     const dayBefore = new Date(start.getTime() - 24 * 60 * 60 * 1000);
     const dayAfter = new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
@@ -1230,44 +1261,26 @@ export class BookingService {
       },
     });
 
-    const reqDayOfWeek = start.getDay();
-    const reqDayOfMonth = start.getDate();
-    
-    // Requested time range in minutes from midnight
-    const reqStartMinutes = start.getHours() * 60 + start.getMinutes();
-    const reqEndMinutes = reqStartMinutes + durationMinutes;
-
     for (const temp of templates) {
-      // Parse template timeOfDay "HH:MM"
-      const [tHours, tMinutes] = temp.timeOfDay.split(':').map(Number);
-      const tempStartMinutes = tHours * 60 + tMinutes;
-      const tempEndMinutes = tempStartMinutes + temp.durationMinutes;
+      // Calculate the duration in minutes for the template
+      const tempDurationMinutes = (temp.durationHours * 60) - 10;
+      // Calculate the single candidate occurrence of this template that could overlap
+      const checkBase = new Date(start.getTime() - tempDurationMinutes * 60 * 1000);
+      const occurrence = this.getTemplateNextOccurrence(temp.frequency, temp.startDate, checkBase);
+      const tempEnd = new Date(occurrence.getTime() + tempDurationMinutes * 60 * 1000);
 
-      // Check frequency alignment
-      let dayMatches = false;
-      if (temp.frequency === RecurringFrequency.DAILY) {
-        dayMatches = true;
-      } else if (temp.frequency === RecurringFrequency.WEEKLY || temp.frequency === RecurringFrequency.BIWEEKLY) {
-        dayMatches = temp.dayOfWeek === reqDayOfWeek;
-      } else if (temp.frequency === RecurringFrequency.MONTHLY) {
-        dayMatches = temp.dayOfMonth === reqDayOfMonth;
-      }
-
-      if (dayMatches) {
-        // Check if minutes overlap
-        if (reqStartMinutes < tempEndMinutes && reqEndMinutes > tempStartMinutes) {
-          return {
-            conflictType: 'RECURRING_TEMPLATE',
-            conflict: {
-              id: temp.id,
-              title: temp.title,
-              scheduledAt: start, // Representing the conflict on the same checked date
-              durationMinutes: temp.durationMinutes,
-              timeOfDay: temp.timeOfDay,
-              frequency: temp.frequency,
-            },
-          };
-        }
+      // Check if it overlaps with the requested slot
+      if (occurrence < end && tempEnd > start) {
+        return {
+          conflictType: 'RECURRING_TEMPLATE',
+          conflict: {
+            id: temp.id,
+            title: temp.title,
+            scheduledAt: occurrence,
+            durationMinutes: tempDurationMinutes,
+            frequency: temp.frequency,
+          },
+        };
       }
     }
 
@@ -1374,5 +1387,156 @@ export class BookingService {
     }
 
     return booking;
+  }
+
+  async studentBookSlot(studentId: string, bookingId: string) {
+    await this.ensureUserRole(studentId, UserRole.STUDENT);
+
+    const booking = await this.prisma.client.booking.findUnique({
+      where: { id: bookingId },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking slot not found');
+    }
+
+    if (booking.studentId) {
+      throw new BadRequestException('This booking slot is already taken');
+    }
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new BadRequestException('Cannot book a cancelled slot');
+    }
+
+    if (booking.scheduledAt && booking.scheduledAt <= new Date()) {
+      throw new BadRequestException('Cannot book a slot in the past');
+    }
+
+    if (booking.isPackage) {
+      throw new BadRequestException(
+        'Cannot book a single slot from a package. You must book the entire package together.',
+      );
+    }
+
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      await this.ensureStudentHasCredit(studentId, tx);
+      await this.deductStudentCredit(studentId, tx);
+
+      return tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          studentId,
+          status: BookingStatus.SCHEDULED,
+          creditCost: 1,
+          creditDeductedAt: new Date(),
+          participants: this.createBookingParticipants([studentId]),
+        },
+        include: this.bookingInclude,
+      });
+    });
+
+    await this.notificationService.createMany([studentId], {
+      type: 'BOOKING_SCHEDULED',
+      title: 'Booking confirmed',
+      message: `Your booking for ${updated.topic || 'Class'} is confirmed.`,
+      data: {
+        bookingId: updated.id,
+        scheduledAt: updated.scheduledAt?.toISOString() ?? null,
+      },
+    });
+
+    return {
+      message: 'Booking slot confirmed successfully',
+      data: updated,
+    };
+  }
+
+  async studentBookPackage(studentId: string, recurringScheduleId: string) {
+    await this.ensureUserRole(studentId, UserRole.STUDENT);
+
+    const schedule = await this.prisma.client.tutorRecurringSchedule.findUnique({
+      where: { id: recurringScheduleId },
+    });
+
+    if (!schedule) {
+      throw new NotFoundException('Recurring schedule package not found');
+    }
+
+    // Find all future unbooked slots of the package
+    const unbookedSessions = await this.prisma.client.booking.findMany({
+      where: {
+        recurringScheduleId,
+        studentId: null,
+        status: BookingStatus.SCHEDULED,
+        scheduledAt: { gte: new Date() },
+      },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    if (unbookedSessions.length === 0) {
+      throw new BadRequestException('No unbooked sessions available in this package');
+    }
+
+    const requiredCredits = unbookedSessions.length;
+
+    const result = await this.prisma.client.$transaction(async (tx) => {
+      const creditBalance = await tx.studentCreditBalance.findUnique({
+        where: { studentId },
+        select: { totalCredits: true },
+      });
+
+      if (!creditBalance || creditBalance.totalCredits < requiredCredits) {
+        throw new BadRequestException(
+          `Not enough credits. Required: ${requiredCredits}, Available: ${creditBalance?.totalCredits || 0}`,
+        );
+      }
+
+      // Deduct credits
+      await tx.studentCreditBalance.updateMany({
+        where: {
+          studentId,
+          totalCredits: { gte: requiredCredits },
+        },
+        data: {
+          totalCredits: { decrement: requiredCredits },
+        },
+      });
+
+      // Update all unbooked bookings
+      const updatedBookings = [];
+      for (const session of unbookedSessions) {
+        const updated = await tx.booking.update({
+          where: { id: session.id },
+          data: {
+            studentId,
+            creditCost: 1,
+            creditDeductedAt: new Date(),
+            participants: this.createBookingParticipants([studentId]),
+          },
+          include: this.bookingInclude,
+        });
+        updatedBookings.push(updated);
+      }
+
+      return updatedBookings;
+    });
+
+    // Send confirmations
+    for (const b of result) {
+      await this.notificationService.createMany([studentId], {
+        type: 'BOOKING_SCHEDULED',
+        title: 'Package booking confirmed',
+        message: `Your class for ${b.topic || 'Class'} is confirmed.`,
+        data: {
+          bookingId: b.id,
+          scheduledAt: b.scheduledAt?.toISOString() ?? null,
+        },
+      });
+    }
+
+    return {
+      message: `Package booked successfully. Confirmed ${result.length} sessions.`,
+      data: result,
+    };
   }
 }

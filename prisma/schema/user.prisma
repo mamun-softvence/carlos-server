@@ -131,6 +131,7 @@ model Booking {
 
   tutorBookingType    TutorBookingType? // Added tutorBookingType
   recurringScheduleId String?           // Added recurringScheduleId
+  isPackage           Boolean          @default(false)
 
   requestedDate      DateTime?
   requestedTimeLabel String?
@@ -517,14 +518,19 @@ model TutorRecurringSchedule {
   tags               String[]
 
   frequency          RecurringFrequency @default(WEEKLY)
-  dayOfWeek          Int?
+  dayOfWeek          Int[]
   dayOfMonth         Int?
   timeOfDay          String
-  durationMinutes    Int                @default(50)
+  startDate          DateTime
+  endDate            DateTime?
+  durationHours      Int                @default(1)
+  isPackage          Boolean            @default(true)
 
   openingWindowDays  Int                @default(7)
   isActive           Boolean            @default(true)
   lastGeneratedUpTo  DateTime?
+
+  occurrencesConfig  Json?
 
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt

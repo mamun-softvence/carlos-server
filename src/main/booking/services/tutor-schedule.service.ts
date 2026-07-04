@@ -26,83 +26,308 @@ export class TutorScheduleService {
     }
   }
 
-  // Find the next occurrence date/time for a given schedule configuration
-  getNextOccurrence(
+  getNextOccurrenceForMultipleWeekdays(
+    base: Date,
+    frequency: RecurringFrequency,
+    dayOfWeek: number[],
+    startDate: Date,
+  ): Date {
+    const startOfWeek = new Date(startDate);
+    startOfWeek.setDate(startDate.getDate() - startDate.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    let current = new Date(base.getTime() + 1000);
+    while (true) {
+      const currentDay = current.getDay();
+      if (dayOfWeek.includes(currentDay)) {
+        if (frequency === RecurringFrequency.WEEKLY) {
+          return current;
+        }
+        if (frequency === RecurringFrequency.BIWEEKLY) {
+          const currentSunday = new Date(current);
+          currentSunday.setDate(current.getDate() - current.getDay());
+          currentSunday.setHours(0, 0, 0, 0);
+          
+          const diffMs = currentSunday.getTime() - startOfWeek.getTime();
+          const diffWeeks = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
+          if (diffWeeks % 2 === 0) {
+            return current;
+          }
+        }
+      }
+      current.setDate(current.getDate() + 1);
+      if (current.getTime() - base.getTime() > 1000 * 24 * 60 * 60 * 365) {
+        break; // safety cutoff (1 year)
+      }
+    }
+    return current;
+  }
+
+  getOccurrenceDateTime(
+    startDate: Date,
+    frequency: RecurringFrequency,
+    index: number,
+    dayOfWeek?: number[] | null,
+  ): Date {
+    if ((frequency === RecurringFrequency.WEEKLY || frequency === RecurringFrequency.BIWEEKLY) && dayOfWeek && dayOfWeek.length > 0) {
+      let current = new Date(startDate);
+      for (let step = 0; step < index; step++) {
+        current = this.getNextOccurrenceForMultipleWeekdays(current, frequency, dayOfWeek, startDate);
+      }
+      return current;
+    }
+
+    const date = new Date(startDate);
+    if (frequency === RecurringFrequency.DAILY) {
+      date.setDate(date.getDate() + index);
+    } else if (frequency === RecurringFrequency.WEEKLY) {
+      date.setDate(date.getDate() + index * 7);
+    } else if (frequency === RecurringFrequency.BIWEEKLY) {
+      date.setDate(date.getDate() + index * 14);
+    } else if (frequency === RecurringFrequency.MONTHLY) {
+      date.setMonth(date.getMonth() + index);
+    }
+    return date;
+  }
+
+  getOccurrenceIndexAfter(
+    startDate: Date,
+    frequency: RecurringFrequency,
+    baseDate: Date,
+    dayOfWeek?: number[] | null,
+  ): number {
+    const diffMs = baseDate.getTime() - startDate.getTime();
+    if (diffMs <= 0) {
+      return 0;
+    }
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    let estimatedIndex = 0;
+    if (frequency === RecurringFrequency.DAILY) {
+      estimatedIndex = Math.floor(diffDays);
+    } else if (frequency === RecurringFrequency.WEEKLY) {
+      const multiplier = (dayOfWeek && dayOfWeek.length > 0) ? dayOfWeek.length : 1;
+      estimatedIndex = Math.floor((diffDays / 7) * multiplier);
+    } else if (frequency === RecurringFrequency.BIWEEKLY) {
+      const multiplier = (dayOfWeek && dayOfWeek.length > 0) ? dayOfWeek.length : 1;
+      estimatedIndex = Math.floor((diffDays / 14) * multiplier);
+    } else if (frequency === RecurringFrequency.MONTHLY) {
+      estimatedIndex = Math.floor(diffDays / 30.44);
+    }
+    return Math.max(0, estimatedIndex - 1);
+  }
+
+  getOccurrenceIndexForDate(
+    startDate: Date,
+    frequency: RecurringFrequency,
+    scheduledAt: Date,
+    dayOfWeek?: number[] | null,
+  ): number {
+    let i = this.getOccurrenceIndexAfter(startDate, frequency, scheduledAt, dayOfWeek);
+    while (true) {
+      const occurrence = this.getOccurrenceDateTime(startDate, frequency, i, dayOfWeek);
+      if (Math.abs(occurrence.getTime() - scheduledAt.getTime()) < 5000) {
+        return i;
+      }
+      if (occurrence > scheduledAt && Math.abs(occurrence.getTime() - scheduledAt.getTime()) > 5000) {
+        break;
+      }
+      i++;
+      if (i > 100000) {
+        break;
+      }
+    }
+    return -1;
+  }
+
+  validateRecurringScheduleDays(
+    frequency: RecurringFrequency,
+    dayOfWeek?: number[],
+    dayOfMonth?: number,
+  ) {
+    if (frequency === RecurringFrequency.WEEKLY || frequency === RecurringFrequency.BIWEEKLY) {
+      if (!dayOfWeek || dayOfWeek.length === 0) {
+        throw new BadRequestException('dayOfWeek is required for WEEKLY and BIWEEKLY schedules');
+      }
+    }
+    if (frequency === RecurringFrequency.MONTHLY) {
+      if (dayOfMonth === undefined || dayOfMonth === null) {
+        throw new BadRequestException('dayOfMonth is required for MONTHLY schedules');
+      }
+    }
+  }
+
+  calculateStartDate(
     frequency: RecurringFrequency,
     timeOfDay: string,
-    dayOfWeek?: number,
+    startFromDate: Date = new Date(),
+    dayOfWeek?: number[],
     dayOfMonth?: number,
-    baseDate: Date = new Date(),
   ): Date {
     const [hours, minutes] = timeOfDay.split(':').map(Number);
-    const date = new Date(baseDate);
+    const date = new Date(startFromDate);
     date.setHours(hours, minutes, 0, 0);
 
     if (frequency === RecurringFrequency.DAILY) {
-      if (date <= baseDate) {
-        date.setDate(date.getDate() + 1);
+      // No extra offset needed
+    } else if (frequency === RecurringFrequency.WEEKLY || frequency === RecurringFrequency.BIWEEKLY) {
+      if (!dayOfWeek || dayOfWeek.length === 0) {
+        throw new BadRequestException('dayOfWeek is required for WEEKLY and BIWEEKLY schedules');
       }
-      return date;
-    }
-
-    if (frequency === RecurringFrequency.WEEKLY || frequency === RecurringFrequency.BIWEEKLY) {
-      if (dayOfWeek === undefined || dayOfWeek === null) {
-        throw new BadRequestException('dayOfWeek is required');
-      }
+      const sortedDays = [...dayOfWeek].sort((a, b) => a - b);
       const currentDay = date.getDay();
-      let distance = (dayOfWeek + 7 - currentDay) % 7;
-      if (distance === 0 && date <= baseDate) {
-        distance = 7;
+      let targetDay = sortedDays.find(d => d >= currentDay);
+      if (targetDay === undefined) {
+        targetDay = sortedDays[0];
       }
+      let distance = (targetDay + 7 - currentDay) % 7;
       date.setDate(date.getDate() + distance);
-      return date;
+    } else if (frequency === RecurringFrequency.MONTHLY) {
+      if (dayOfMonth === undefined || dayOfMonth === null) {
+        throw new BadRequestException('dayOfMonth is required for MONTHLY schedules');
+      }
+      const currentDayOfMonth = date.getDate();
+      if (currentDayOfMonth > dayOfMonth) {
+        date.setMonth(date.getMonth() + 1);
+      }
+      date.setDate(dayOfMonth);
     }
 
-    if (frequency === RecurringFrequency.MONTHLY) {
-      if (dayOfMonth === undefined || dayOfMonth === null) {
-        throw new BadRequestException('dayOfMonth is required');
-      }
-      // Target day of month
-      date.setDate(dayOfMonth);
-      if (date <= baseDate) {
+    // Shift forward if start date/time lies in the past
+    if (date < new Date()) {
+      if (frequency === RecurringFrequency.DAILY) {
+        date.setDate(date.getDate() + 1);
+      } else if (frequency === RecurringFrequency.WEEKLY || frequency === RecurringFrequency.BIWEEKLY) {
+        const next = this.getNextOccurrenceForMultipleWeekdays(date, frequency, dayOfWeek!, date);
+        date.setTime(next.getTime());
+      } else if (frequency === RecurringFrequency.MONTHLY) {
         date.setMonth(date.getMonth() + 1);
-        date.setDate(dayOfMonth);
       }
-      return date;
     }
 
     return date;
   }
 
+  getNextOccurrence(
+    frequency: RecurringFrequency,
+    startDate: Date,
+    baseDate: Date = new Date(),
+    dayOfWeek?: number[] | null,
+  ): Date {
+    let i = this.getOccurrenceIndexAfter(startDate, frequency, baseDate, dayOfWeek);
+    while (true) {
+      const occurrence = this.getOccurrenceDateTime(startDate, frequency, i, dayOfWeek);
+      if (occurrence > baseDate) {
+        return occurrence;
+      }
+      i++;
+      if (i > 100000) {
+        return occurrence;
+      }
+    }
+  }
+
+  getEstimatedOccurrencesCount(
+    startDate: Date,
+    frequency: RecurringFrequency,
+    openingWindowDays: number,
+    dayOfWeek?: number[] | null,
+    endDate?: Date | null,
+  ): number {
+    const now = new Date();
+    const limitDate = new Date(Date.now() + openingWindowDays * 24 * 60 * 60 * 1000);
+    const upperLimit = endDate && endDate < limitDate ? endDate : limitDate;
+
+    let current = now;
+    let count = 0;
+    while (true) {
+      const next = this.getNextOccurrence(frequency, startDate, current, dayOfWeek);
+      if (next > upperLimit) {
+        break;
+      }
+      count++;
+      current = new Date(next.getTime());
+      if (count > 100) break; // safety cutoff
+    }
+    return count;
+  }
+
   async createSchedule(tutorId: string, dto: TutorCreateRecurringScheduleDto) {
     await this.ensureTutorRole(tutorId);
 
-    // Validate day selection constraints based on frequency
-    this.bookingService.validateRecurringScheduleDays(
-      dto.frequency,
-      dto.dayOfWeek,
-      dto.dayOfMonth,
-    );
+    this.validateRecurringScheduleDays(dto.frequency, dto.dayOfWeek, dto.dayOfMonth);
 
-    // Check overlap at the next occurrence date
-    const nextDate = this.getNextOccurrence(
+    const startDate = this.calculateStartDate(
       dto.frequency,
       dto.timeOfDay,
+      dto.startFromDate || new Date(),
       dto.dayOfWeek,
       dto.dayOfMonth,
     );
 
-    const overlap = await this.bookingService.checkOverlap(
-      tutorId,
-      nextDate,
-      dto.durationMinutes,
-    );
-    if (overlap) {
-      throw new ConflictException({
-        message: 'This recurring slot overlaps with an existing booking or recurring template',
-        conflictType: overlap.conflictType,
-        conflict: overlap.conflict,
-      });
+    if (dto.endDate && dto.endDate <= startDate) {
+      throw new BadRequestException('endDate must be after the calculated start date');
+    }
+
+    const durationHours = dto.durationHours || 1;
+    const isPackage = dto.isPackage !== undefined ? dto.isPackage : true;
+
+    // Validate maximum slots in a single package constraint (maximum 5 slots)
+    if (isPackage) {
+      const estimatedOccurrences = dto.occurrencesConfig && dto.occurrencesConfig.length > 0
+        ? dto.occurrencesConfig.length
+        : this.getEstimatedOccurrencesCount(startDate, dto.frequency, dto.openingWindowDays, dto.dayOfWeek, dto.endDate);
+
+      const totalSlots = estimatedOccurrences * durationHours;
+      if (totalSlots > 5) {
+        throw new BadRequestException(
+          `Maximum total slots in a single package is limited to 5. You requested/estimated ${totalSlots} slots.`,
+        );
+      }
+    }
+
+    // 1. Verify that there are no overlaps for the calculated base nextDate (for all H hours)
+    const nextDate = this.getNextOccurrence(dto.frequency, startDate, new Date(), dto.dayOfWeek);
+    for (let i = 0; i < durationHours; i++) {
+      const slotTime = new Date(nextDate.getTime() + i * 60 * 60 * 1000);
+      const baseOverlap = await this.bookingService.checkOverlap(
+        tutorId,
+        slotTime,
+        50,
+      );
+      if (baseOverlap) {
+        throw new ConflictException({
+          message: `This recurring slot segment at ${slotTime.toISOString()} overlaps with an existing booking or recurring template`,
+          conflictType: baseOverlap.conflictType,
+          conflict: baseOverlap.conflict,
+        });
+      }
+    }
+
+    // 2. Verify each dedicated class datetime in occurrencesConfig does not overlap
+    if (dto.occurrencesConfig && dto.occurrencesConfig.length > 0) {
+      const now = new Date();
+      for (const item of dto.occurrencesConfig) {
+        const baseScheduledAt = new Date(item.scheduledAt);
+        if (baseScheduledAt <= now) {
+          throw new BadRequestException(`Class date-time must be in the future: ${baseScheduledAt.toISOString()}`);
+        }
+
+        for (let i = 0; i < durationHours; i++) {
+          const slotTime = new Date(baseScheduledAt.getTime() + i * 60 * 60 * 1000);
+          const overlap = await this.bookingService.checkOverlap(
+            tutorId,
+            slotTime,
+            50,
+          );
+          if (overlap) {
+            throw new ConflictException({
+              message: `The occurrence segment at ${slotTime.toISOString()} overlaps with an existing booking or template`,
+              conflictType: overlap.conflictType,
+              conflict: overlap.conflict,
+            });
+          }
+        }
+      }
     }
 
     // Verify student exists if specified
@@ -123,11 +348,15 @@ export class TutorScheduleService {
         description: dto.description,
         tags: dto.tags || [],
         frequency: dto.frequency,
-        dayOfWeek: dto.dayOfWeek ?? null,
+        dayOfWeek: dto.dayOfWeek ?? [],
         dayOfMonth: dto.dayOfMonth ?? null,
         timeOfDay: dto.timeOfDay,
-        durationMinutes: dto.durationMinutes,
+        startDate: startDate,
+        endDate: dto.endDate || null,
+        durationHours,
+        isPackage,
         openingWindowDays: dto.openingWindowDays,
+        occurrencesConfig: dto.occurrencesConfig ? JSON.parse(JSON.stringify(dto.occurrencesConfig)) : null,
         isActive: true,
       },
     });
@@ -175,44 +404,116 @@ export class TutorScheduleService {
     const dayOfWeek = dto.dayOfWeek !== undefined ? dto.dayOfWeek : existing.dayOfWeek;
     const dayOfMonth = dto.dayOfMonth !== undefined ? dto.dayOfMonth : existing.dayOfMonth;
     const timeOfDay = dto.timeOfDay ?? existing.timeOfDay;
-    const durationMinutes = dto.durationMinutes ?? existing.durationMinutes;
+    const durationHours = dto.durationHours ?? existing.durationHours;
+    const isPackage = dto.isPackage !== undefined ? dto.isPackage : existing.isPackage;
 
-    // Validate day constraints if changed
-    this.bookingService.validateRecurringScheduleDays(
-      frequency,
-      dayOfWeek ?? undefined,
-      dayOfMonth ?? undefined,
-    );
+    this.validateRecurringScheduleDays(frequency, dayOfWeek ?? undefined, dayOfMonth ?? undefined);
 
-    // Check overlap at next occurrence if time/day changes
+    let startDate = existing.startDate;
     if (
       dto.frequency ||
+      dto.timeOfDay ||
       dto.dayOfWeek !== undefined ||
       dto.dayOfMonth !== undefined ||
-      dto.timeOfDay ||
-      dto.durationMinutes
+      dto.startFromDate
     ) {
-      const nextDate = this.getNextOccurrence(
+      const baseDate = dto.startFromDate ?? new Date();
+      startDate = this.calculateStartDate(
         frequency,
         timeOfDay,
+        baseDate,
         dayOfWeek ?? undefined,
         dayOfMonth ?? undefined,
       );
+    }
 
-      const overlap = await this.bookingService.checkOverlap(
-        tutorId,
-        nextDate,
-        durationMinutes,
-        id,
-      );
-      if (overlap) {
-        throw new ConflictException({
-          message: 'Updated recurring slot overlaps with an existing booking or template',
-          conflictType: overlap.conflictType,
-          conflict: overlap.conflict,
-        });
+    const endDate = dto.endDate !== undefined ? dto.endDate : existing.endDate;
+    if (endDate && endDate <= startDate) {
+      throw new BadRequestException('endDate must be after the calculated start date');
+    }
+
+    // Validate maximum slots in a single package constraint (maximum 5 slots)
+    if (isPackage) {
+      const estimatedOccurrences = dto.occurrencesConfig && dto.occurrencesConfig.length > 0
+        ? dto.occurrencesConfig.length
+        : this.getEstimatedOccurrencesCount(startDate, frequency, dto.openingWindowDays ?? existing.openingWindowDays, dayOfWeek, endDate);
+
+      const totalSlots = estimatedOccurrences * durationHours;
+      if (totalSlots > 5) {
+        throw new BadRequestException(
+          `Maximum total slots in a single package is limited to 5. You requested/estimated ${totalSlots} slots.`,
+        );
       }
     }
+
+    // Check base overlap at next occurrence if timing changes
+    if (
+      dto.frequency ||
+      dto.timeOfDay ||
+      dto.dayOfWeek !== undefined ||
+      dto.dayOfMonth !== undefined ||
+      dto.startFromDate ||
+      dto.endDate !== undefined ||
+      dto.durationHours
+    ) {
+      const nextDate = this.getNextOccurrence(frequency, startDate, new Date(), dayOfWeek);
+
+      for (let i = 0; i < durationHours; i++) {
+        const slotTime = new Date(nextDate.getTime() + i * 60 * 60 * 1000);
+        const overlap = await this.bookingService.checkOverlap(
+          tutorId,
+          slotTime,
+          50,
+          id,
+        );
+        if (overlap) {
+          throw new ConflictException({
+            message: `Updated recurring slot segment at ${slotTime.toISOString()} overlaps with an existing booking or template`,
+            conflictType: overlap.conflictType,
+            conflict: overlap.conflict,
+          });
+        }
+      }
+    }
+
+    // Check overlap for new occurrencesConfig datetimes if updated
+    if (dto.occurrencesConfig && dto.occurrencesConfig.length > 0) {
+      const now = new Date();
+      for (const item of dto.occurrencesConfig) {
+        const baseScheduledAt = new Date(item.scheduledAt);
+        if (baseScheduledAt <= now) {
+          throw new BadRequestException(`Class date-time must be in the future: ${baseScheduledAt.toISOString()}`);
+        }
+
+        for (let i = 0; i < durationHours; i++) {
+          const slotTime = new Date(baseScheduledAt.getTime() + i * 60 * 60 * 1000);
+          const overlap = await this.bookingService.checkOverlap(
+            tutorId,
+            slotTime,
+            50,
+            id,
+          );
+          if (overlap) {
+            throw new ConflictException({
+              message: `The updated occurrence segment at ${slotTime.toISOString()} overlaps with an existing booking or template`,
+              conflictType: overlap.conflictType,
+              conflict: overlap.conflict,
+            });
+          }
+        }
+      }
+    }
+
+    const timingChanged =
+      dto.frequency !== undefined ||
+      dto.timeOfDay !== undefined ||
+      dto.dayOfWeek !== undefined ||
+      dto.dayOfMonth !== undefined ||
+      dto.startFromDate !== undefined ||
+      dto.endDate !== undefined ||
+      dto.durationHours !== undefined ||
+      dto.occurrencesConfig !== undefined ||
+      dto.isPackage !== undefined;
 
     const updated = await this.prisma.client.$transaction(async (tx) => {
       const res = await tx.tutorRecurringSchedule.update({
@@ -226,14 +527,20 @@ export class TutorScheduleService {
           dayOfWeek,
           dayOfMonth,
           timeOfDay,
-          durationMinutes,
+          startDate,
+          endDate,
+          durationHours,
+          isPackage,
           openingWindowDays: dto.openingWindowDays ?? existing.openingWindowDays,
           isActive: dto.isActive !== undefined ? dto.isActive : existing.isActive,
+          occurrencesConfig: dto.occurrencesConfig !== undefined ? (dto.occurrencesConfig ? JSON.parse(JSON.stringify(dto.occurrencesConfig)) : null) : existing.occurrencesConfig,
+          // Reset watermark if timing changed to force regeneration
+          lastGeneratedUpTo: timingChanged ? null : existing.lastGeneratedUpTo,
         },
       });
 
-      // Cleanup future unbooked slots if deactivated
-      if (dto.isActive === false && existing.isActive) {
+      // Branch A: Timing or deactivation changes -> Delete future unbooked slots
+      if (timingChanged || (dto.isActive === false && existing.isActive)) {
         await tx.booking.deleteMany({
           where: {
             recurringScheduleId: id,
@@ -241,6 +548,38 @@ export class TutorScheduleService {
             scheduledAt: { gte: new Date() },
           },
         });
+      } else if (!timingChanged && (dto.title !== undefined || dto.description !== undefined || dto.tags !== undefined || dto.occurrencesConfig !== undefined)) {
+        // Branch B: Content-only update -> Sync changes to future unbooked slots
+        const futureBookings = await tx.booking.findMany({
+          where: {
+            recurringScheduleId: id,
+            studentId: null,
+            scheduledAt: { gte: new Date() },
+          },
+        });
+
+        for (const booking of futureBookings) {
+          if (!booking.scheduledAt) continue;
+          const index = this.getOccurrenceIndexForDate(
+            res.startDate,
+            res.frequency,
+            booking.scheduledAt,
+            res.dayOfWeek,
+          );
+          if (index !== -1) {
+            const configItem = (res.occurrencesConfig as any)?.[index];
+            const topic = configItem?.title || res.title || 'Lesson Slot';
+            const note = configItem?.description || res.description || '';
+            await tx.booking.update({
+              where: { id: booking.id },
+              data: {
+                topic,
+                note,
+                tags: res.tags,
+              },
+            });
+          }
+        }
       }
 
       return res;
@@ -294,20 +633,20 @@ export class TutorScheduleService {
     }
 
     const previewDates: Date[] = [];
-    let current = new Date();
+    const now = new Date();
     const limit = new Date(Date.now() + schedule.openingWindowDays * 24 * 60 * 60 * 1000);
 
-    while (current < limit) {
-      const next = this.getNextOccurrence(
-        schedule.frequency,
-        schedule.timeOfDay,
-        schedule.dayOfWeek ?? undefined,
-        schedule.dayOfMonth ?? undefined,
-        current,
-      );
-      if (next > limit) break;
-      previewDates.push(next);
-      current = new Date(next.getTime());
+    let i = 0;
+    while (true) {
+      const next = this.getOccurrenceDateTime(schedule.startDate, schedule.frequency, i, schedule.dayOfWeek);
+      if (next > limit) {
+        break;
+      }
+      if (next >= now) {
+        previewDates.push(next);
+      }
+      i++;
+      if (i > 10000) break;
     }
 
     return previewDates;

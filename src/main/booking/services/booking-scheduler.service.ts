@@ -33,65 +33,165 @@ export class BookingSchedulerService {
         const now = new Date();
         const limitDate = new Date(Date.now() + schedule.openingWindowDays * 24 * 60 * 60 * 1000);
         
-        // Start generating from the maximum of NOW or lastGeneratedUpTo
-        let current = schedule.lastGeneratedUpTo && new Date(schedule.lastGeneratedUpTo) > now
-          ? new Date(schedule.lastGeneratedUpTo)
-          : now;
-
         let generatedCount = 0;
 
-        while (true) {
-          const nextOccurrence = this.tutorScheduleService.getNextOccurrence(
-            schedule.frequency,
-            schedule.timeOfDay,
-            schedule.dayOfWeek ?? undefined,
-            schedule.dayOfMonth ?? undefined,
-            current,
-          );
+        const configArray = schedule.occurrencesConfig as any[];
+        if (configArray && Array.isArray(configArray) && configArray.length > 0) {
+          // Dedicated occurrence datetime generation
+          for (const item of configArray) {
+            if (!item.scheduledAt) continue;
+            const scheduledAt = new Date(item.scheduledAt);
+            
+            // Only generate if scheduledAt is within opening window and in the future
+            if (scheduledAt > limitDate || scheduledAt < now) {
+              continue;
+            }
 
-          if (nextOccurrence > limitDate) {
-            break;
-          }
+            // Skip if it exceeds the template's end date
+            if (schedule.endDate && scheduledAt > schedule.endDate) {
+              continue;
+            }
 
-          // Check for conflicts
-          const overlap = await this.bookingService.checkOverlap(
-            schedule.tutorId,
-            nextOccurrence,
-            schedule.durationMinutes,
-          );
+            // Check if booking already exists for this template at this datetime
+            const existingBooking = await this.prisma.client.booking.findFirst({
+              where: {
+                recurringScheduleId: schedule.id,
+                scheduledAt,
+              },
+            });
+            if (existingBooking) {
+              continue;
+            }
 
-          if (!overlap) {
-            try {
-              await this.prisma.client.booking.create({
-                data: {
-                  tutorId: schedule.tutorId,
-                  studentId: schedule.studentId || null,
-                  createdBy: BookingCreatedBy.TUTOR,
-                  status: BookingStatus.SCHEDULED,
-                  liveClassStatus: LiveClassStatus.SCHEDULED,
-                  topic: schedule.title,
-                  note: schedule.description,
-                  tags: schedule.tags,
-                  tutorBookingType: TutorBookingType.RECURRING,
-                  recurringScheduleId: schedule.id,
-                  scheduledAt: nextOccurrence,
-                  durationMinutes: schedule.durationMinutes,
-                },
-              });
-              generatedCount++;
-            } catch (err: any) {
-              // Handle P2002 Unique constraint violation if it already exists
-              if (err?.code !== 'P2002') {
+            // Check overlap for each hourly segment of the occurrence
+            let hasOverlap = false;
+            for (let i = 0; i < schedule.durationHours; i++) {
+              const slotTime = new Date(scheduledAt.getTime() + i * 60 * 60 * 1000);
+              const overlap = await this.bookingService.checkOverlap(
+                schedule.tutorId,
+                slotTime,
+                50,
+              );
+              if (overlap) {
+                hasOverlap = true;
+                break;
+              }
+            }
+
+            if (!hasOverlap) {
+              try {
+                for (let i = 0; i < schedule.durationHours; i++) {
+                  const slotTime = new Date(scheduledAt.getTime() + i * 60 * 60 * 1000);
+                  const topic = item.title || schedule.title || 'Lesson Slot';
+                  const displayTopic = schedule.durationHours > 1 
+                    ? `${topic} (Session ${i + 1}/${schedule.durationHours})`
+                    : topic;
+                  const note = item.description || schedule.description || '';
+                  const tags = item.tags || schedule.tags || [];
+
+                  await this.prisma.client.booking.create({
+                    data: {
+                      tutorId: schedule.tutorId,
+                      studentId: schedule.studentId || null,
+                      createdBy: BookingCreatedBy.TUTOR,
+                      status: BookingStatus.SCHEDULED,
+                      liveClassStatus: LiveClassStatus.SCHEDULED,
+                      topic: displayTopic,
+                      note,
+                      tags,
+                      tutorBookingType: TutorBookingType.RECURRING,
+                      recurringScheduleId: schedule.id,
+                      scheduledAt: slotTime,
+                      durationMinutes: 50,
+                      isPackage: schedule.isPackage,
+                    },
+                  });
+                  generatedCount++;
+                }
+              } catch (err: any) {
                 this.logger.error(
-                  `Error generating booking for schedule ${schedule.id} at ${nextOccurrence.toISOString()}:`,
+                  `Error generating bookings for schedule ${schedule.id} at ${scheduledAt.toISOString()}:`,
                   err,
                 );
               }
             }
           }
+        } else {
+          // Fall back to original frequency-based generation
+          let current = schedule.lastGeneratedUpTo && new Date(schedule.lastGeneratedUpTo) > now
+            ? new Date(schedule.lastGeneratedUpTo)
+            : now;
 
-          // Advance current marker
-          current = new Date(nextOccurrence.getTime());
+          while (true) {
+            const nextOccurrence = this.tutorScheduleService.getNextOccurrence(
+              schedule.frequency,
+              schedule.startDate,
+              current,
+              schedule.dayOfWeek,
+            );
+
+            if (nextOccurrence > limitDate) {
+              break;
+            }
+
+            // Halt if occurrence exceeds end date
+            if (schedule.endDate && nextOccurrence > schedule.endDate) {
+              break;
+            }
+
+            // Check overlap for each hourly segment of the occurrence
+            let hasOverlap = false;
+            for (let i = 0; i < schedule.durationHours; i++) {
+              const slotTime = new Date(nextOccurrence.getTime() + i * 60 * 60 * 1000);
+              const overlap = await this.bookingService.checkOverlap(
+                schedule.tutorId,
+                slotTime,
+                50,
+              );
+              if (overlap) {
+                hasOverlap = true;
+                break;
+              }
+            }
+
+            if (!hasOverlap) {
+              try {
+                for (let i = 0; i < schedule.durationHours; i++) {
+                  const slotTime = new Date(nextOccurrence.getTime() + i * 60 * 60 * 1000);
+                  const displayTopic = schedule.durationHours > 1
+                    ? `${schedule.title || 'Lesson Slot'} (Session ${i + 1}/${schedule.durationHours})`
+                    : (schedule.title || 'Lesson Slot');
+
+                  await this.prisma.client.booking.create({
+                    data: {
+                      tutorId: schedule.tutorId,
+                      studentId: schedule.studentId || null,
+                      createdBy: BookingCreatedBy.TUTOR,
+                      status: BookingStatus.SCHEDULED,
+                      liveClassStatus: LiveClassStatus.SCHEDULED,
+                      topic: displayTopic,
+                      note: schedule.description || '',
+                      tags: schedule.tags,
+                      tutorBookingType: TutorBookingType.RECURRING,
+                      recurringScheduleId: schedule.id,
+                      scheduledAt: slotTime,
+                      durationMinutes: 50,
+                      isPackage: schedule.isPackage,
+                    },
+                  });
+                  generatedCount++;
+                }
+              } catch (err: any) {
+                this.logger.error(
+                  `Error generating bookings for schedule ${schedule.id} at ${nextOccurrence.toISOString()}:`,
+                  err,
+                );
+              }
+            }
+
+            // Advance current marker
+            current = new Date(nextOccurrence.getTime());
+          }
         }
 
         // Update schedule generation watermark

@@ -1,7 +1,7 @@
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { BookingService } from '../services/booking.service';
 import {
@@ -39,5 +39,31 @@ export class BookingStudentController {
     @Body() dto: StudentCreateBookingRequestDto,
   ) {
     return this.bookingService.createStudentRequest(user.userId, dto);
+  }
+
+  @Post(':bookingId/book')
+  @ApiOperation({ summary: 'Book/claim a single non-package open class slot' })
+  @ApiParam({
+    name: 'bookingId',
+    description: 'Unique ID of the unbooked class slot',
+  })
+  bookSingleSlot(
+    @CurrentUser() user: CurrentUserData,
+    @Param('bookingId') bookingId: string,
+  ) {
+    return this.bookingService.studentBookSlot(user.userId, bookingId);
+  }
+
+  @Post('package/:recurringScheduleId')
+  @ApiOperation({ summary: 'Book an entire recurring schedule package of slots' })
+  @ApiParam({
+    name: 'recurringScheduleId',
+    description: 'Unique ID of the recurring schedule template package',
+  })
+  bookPackage(
+    @CurrentUser() user: CurrentUserData,
+    @Param('recurringScheduleId') recurringScheduleId: string,
+  ) {
+    return this.bookingService.studentBookPackage(user.userId, recurringScheduleId);
   }
 }

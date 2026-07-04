@@ -8,11 +8,15 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateNested,
+  IsDate,
   Matches,
   Max,
   Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { RecurringFrequency } from '@prisma/client';
+import { OccurrenceConfigItem } from './tutor-create-recurring-schedule.dto';
 
 export class TutorUpdateRecurringScheduleDto {
   @IsOptional()
@@ -37,10 +41,11 @@ export class TutorUpdateRecurringScheduleDto {
   frequency?: RecurringFrequency;
 
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(6)
-  dayOfWeek?: number;
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
+  dayOfWeek?: number[];
 
   @IsOptional()
   @IsInt()
@@ -56,18 +61,38 @@ export class TutorUpdateRecurringScheduleDto {
   timeOfDay?: string;
 
   @IsOptional()
-  @IsInt()
-  @Equals(50, { message: 'durationMinutes must be exactly 50' })
-  durationMinutes?: number;
+  @IsDate()
+  @Type(() => Date)
+  startFromDate?: Date;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  endDate?: Date;
 
   @IsOptional()
   @IsInt()
-  @IsIn([1, 2, 3, 7, 30, 60, 90, 120, 180], {
-    message: 'openingWindowDays must be 1, 2, 3, 7, 30, 60, 90, 120, or 180',
-  })
+  @Min(1)
+  @Max(5)
+  durationHours?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isPackage?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2000)
   openingWindowDays?: number;
 
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OccurrenceConfigItem)
+  occurrencesConfig?: OccurrenceConfigItem[];
 }

@@ -160,7 +160,7 @@ export class StudentService {
 
   private getBookingCreditAmountForStudent(
     booking: {
-      studentId: string;
+      studentId: string | null;
       creditCost: number;
       participants: Array<{ studentId: string }>;
     },

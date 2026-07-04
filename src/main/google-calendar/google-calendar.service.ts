@@ -85,6 +85,8 @@ type SyncBooking = Prisma.BookingGetPayload<{
   };
 }>;
 
+type SyncBookingStudent = NonNullable<SyncBooking['student']>;
+
 @Injectable()
 export class GoogleCalendarService {
   private readonly logger = new Logger(GoogleCalendarService.name);
@@ -459,7 +461,9 @@ export class GoogleCalendarService {
   private collectBookingUsers(booking: SyncBooking) {
     const users = new Map<string, CalendarUser>();
 
-    users.set(booking.student.id, booking.student);
+    if (booking.student) {
+      users.set(booking.student.id, booking.student);
+    }
 
     if (booking.tutor) {
       users.set(booking.tutor.id, booking.tutor);
@@ -622,11 +626,15 @@ export class GoogleCalendarService {
     const endDate = new Date(
       startDate.getTime() + (booking.durationMinutes ?? 50) * 60_000,
     );
+    const primaryStudent = booking.student;
     const studentNames = [
-      booking.student.name ?? booking.student.email,
+      primaryStudent?.name ?? primaryStudent?.email ?? 'Student',
       ...booking.participants
         .map((participant) => participant.student)
-        .filter((student) => student.id !== booking.student.id)
+        .filter(
+          (student) =>
+            student.id !== primaryStudent?.id,
+        )
         .map((student) => student.name ?? student.email),
     ];
 

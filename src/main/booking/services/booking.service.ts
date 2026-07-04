@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '@/lib/prisma/prisma.service';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -11,6 +12,8 @@ import {
   BookingStatus,
   LiveClassStatus,
   Prisma,
+  RecurringFrequency,
+  TutorBookingType,
   UserRole,
   UserStatus,
 } from '@prisma/client';
@@ -21,6 +24,7 @@ import { UpdateBookingRuleDto } from '../../admin/dto/update-booking-rule.dto';
 import { NotificationService } from '../../notification/services/notification.service';
 import { MediaRoomManagerService } from './media-room-manager.service';
 import { GoogleCalendarService } from '../../google-calendar/google-calendar.service';
+import { TutorCreateCasualBookingDto } from '../dto/tutor-create-casual-booking.dto';
 
 type BookingRuleRow = {
   id: string;
@@ -50,6 +54,8 @@ type BookingWithParticipants = Prisma.BookingGetPayload<{
     };
   };
 }>;
+
+type BookingStudentSummary = NonNullable<BookingWithParticipants['student']>;
 
 @Injectable()
 export class BookingService {
@@ -145,10 +151,10 @@ export class BookingService {
   }
 
   private assertCancellationWindowOpen(
-    booking: { scheduledAt: Date | null },
+    booking: { scheduledAt: Date | null; studentId?: string | null },
     bookingRule: Pick<BookingRuleRow, 'cancellationHours'>,
   ) {
-    if (!booking.scheduledAt) {
+    if (!booking.scheduledAt || !booking.studentId) {
       return;
     }
 
@@ -320,7 +326,7 @@ export class BookingService {
   private async refundBookingCredit(
     booking: {
       id: string;
-      studentId: string;
+      studentId: string | null;
       creditCost: number;
       creditDeductedAt: Date | null;
       creditRefundedAt: Date | null;
@@ -351,7 +357,14 @@ export class BookingService {
       booking.creditCost >= participantStudentIds.length;
     const refundStudentIds = shouldRefundParticipants
       ? participantStudentIds
-      : [booking.studentId];
+      : booking.studentId
+        ? [booking.studentId]
+        : [];
+
+    if (refundStudentIds.length === 0) {
+      return false;
+    }
+
     const creditIncrement = shouldRefundParticipants ? 1 : booking.creditCost;
 
     for (const studentId of refundStudentIds) {
@@ -425,10 +438,17 @@ export class BookingService {
     return booking;
   }
 
-  private getParticipantStudents(booking: BookingWithParticipants) {
-    const students = new Map<string, typeof booking.student>();
+  private getPrimaryStudent(booking: BookingWithParticipants) {
+    return booking.student;
+  }
 
-    students.set(booking.student.id, booking.student);
+  private getParticipantStudents(booking: BookingWithParticipants) {
+    const students = new Map<string, BookingStudentSummary>();
+    const primaryStudent = this.getPrimaryStudent(booking);
+
+    if (primaryStudent) {
+      students.set(primaryStudent.id, primaryStudent);
+    }
 
     for (const participant of booking.participants) {
       students.set(participant.student.id, participant.student);
@@ -628,10 +648,13 @@ export class BookingService {
       include: this.bookingInclude,
     });
 
+    const studentLabel =
+      booking.student?.name ?? booking.student?.email ?? 'A student';
+
     await this.notificationService.createForAdmins({
       type: 'STUDENT_BOOKING_REQUEST',
       title: 'New booking request',
-      message: `${booking.student.name ?? booking.student.email} requested a schedule.`,
+      message: `${studentLabel} requested a schedule.`,
       data: {
         bookingId: booking.id,
         studentId,
@@ -696,6 +719,11 @@ export class BookingService {
       const shouldDeductCredit = !booking.creditDeductedAt;
 
       if (shouldDeductCredit) {
+        if (!booking.studentId) {
+          throw new BadRequestException(
+            'Cannot assign a tutor to a booking without a student',
+          );
+        }
         await this.deductStudentCredit(booking.studentId, tx);
       }
 
@@ -728,7 +756,7 @@ export class BookingService {
         updated.studentId,
         ...updated.participants.map((participant) => participant.student.id),
       ]),
-    ];
+    ].filter((studentId): studentId is string => Boolean(studentId));
 
     await this.notificationService.createMany(bookingStudentIds, {
       type: 'BOOKING_SCHEDULED',
@@ -742,10 +770,13 @@ export class BookingService {
     });
 
     if (updated.tutorId) {
+      const studentLabel =
+        updated.student?.name ?? updated.student?.email ?? 'a student';
+
       await this.notificationService.createMany([updated.tutorId], {
         type: 'TUTOR_ASSIGNED_BOOKING',
         title: 'New scheduled booking',
-        message: `You have been assigned a booking with ${updated.student.name ?? updated.student.email}.`,
+        message: `You have been assigned a booking with ${studentLabel}.`,
         data: {
           bookingId: updated.id,
           studentId: updated.studentId,
@@ -1124,5 +1155,224 @@ export class BookingService {
 
   private async syncGoogleCalendar(bookingId: string) {
     await this.googleCalendarService.syncBooking(bookingId);
+  }
+
+  // --- Tutor Recurring Schedules & Casual Bookings Helpers ---
+
+  validateRecurringScheduleDays(
+    frequency: RecurringFrequency,
+    dayOfWeek?: number,
+    dayOfMonth?: number,
+  ) {
+    if (frequency === RecurringFrequency.WEEKLY || frequency === RecurringFrequency.BIWEEKLY) {
+      if (dayOfWeek === undefined || dayOfWeek === null) {
+        throw new BadRequestException('dayOfWeek is required for WEEKLY and BIWEEKLY schedules');
+      }
+    }
+    if (frequency === RecurringFrequency.MONTHLY) {
+      if (dayOfMonth === undefined || dayOfMonth === null) {
+        throw new BadRequestException('dayOfMonth is required for MONTHLY schedules');
+      }
+    }
+  }
+
+  async checkOverlap(
+    tutorId: string,
+    scheduledAt: Date,
+    durationMinutes: number,
+    excludeId?: string,
+  ): Promise<{ conflictType: 'BOOKING' | 'RECURRING_TEMPLATE'; conflict: any } | null> {
+    const start = scheduledAt;
+    const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+
+    // 1. Check existing non-cancelled bookings for overlap
+    // Fetch all bookings within a +/- 24h range to handle same-day checks cleanly
+    const dayBefore = new Date(start.getTime() - 24 * 60 * 60 * 1000);
+    const dayAfter = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+
+    const bookings = await this.prisma.client.booking.findMany({
+      where: {
+        tutorId,
+        status: { not: BookingStatus.CANCELLED },
+        scheduledAt: {
+          gte: dayBefore,
+          lte: dayAfter,
+        },
+        id: excludeId ? { not: excludeId } : undefined,
+      },
+    });
+
+    for (const b of bookings) {
+      if (!b.scheduledAt || !b.durationMinutes) continue;
+      const bStart = b.scheduledAt;
+      const bEnd = new Date(bStart.getTime() + b.durationMinutes * 60 * 1000);
+
+      // Overlap logic: start < bEnd AND end > bStart
+      if (start < bEnd && end > bStart) {
+        return {
+          conflictType: 'BOOKING',
+          conflict: {
+            id: b.id,
+            title: b.topic,
+            scheduledAt: b.scheduledAt,
+            durationMinutes: b.durationMinutes,
+          },
+        };
+      }
+    }
+
+    // 2. Check active recurring schedule templates for overlap
+    const templates = await this.prisma.client.tutorRecurringSchedule.findMany({
+      where: {
+        tutorId,
+        isActive: true,
+        id: excludeId ? { not: excludeId } : undefined,
+      },
+    });
+
+    const reqDayOfWeek = start.getDay();
+    const reqDayOfMonth = start.getDate();
+    
+    // Requested time range in minutes from midnight
+    const reqStartMinutes = start.getHours() * 60 + start.getMinutes();
+    const reqEndMinutes = reqStartMinutes + durationMinutes;
+
+    for (const temp of templates) {
+      // Parse template timeOfDay "HH:MM"
+      const [tHours, tMinutes] = temp.timeOfDay.split(':').map(Number);
+      const tempStartMinutes = tHours * 60 + tMinutes;
+      const tempEndMinutes = tempStartMinutes + temp.durationMinutes;
+
+      // Check frequency alignment
+      let dayMatches = false;
+      if (temp.frequency === RecurringFrequency.DAILY) {
+        dayMatches = true;
+      } else if (temp.frequency === RecurringFrequency.WEEKLY || temp.frequency === RecurringFrequency.BIWEEKLY) {
+        dayMatches = temp.dayOfWeek === reqDayOfWeek;
+      } else if (temp.frequency === RecurringFrequency.MONTHLY) {
+        dayMatches = temp.dayOfMonth === reqDayOfMonth;
+      }
+
+      if (dayMatches) {
+        // Check if minutes overlap
+        if (reqStartMinutes < tempEndMinutes && reqEndMinutes > tempStartMinutes) {
+          return {
+            conflictType: 'RECURRING_TEMPLATE',
+            conflict: {
+              id: temp.id,
+              title: temp.title,
+              scheduledAt: start, // Representing the conflict on the same checked date
+              durationMinutes: temp.durationMinutes,
+              timeOfDay: temp.timeOfDay,
+              frequency: temp.frequency,
+            },
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async createCasualBooking(tutorId: string, dto: TutorCreateCasualBookingDto) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+
+    const scheduledAtDate = new Date(dto.scheduledAt);
+    if (Number.isNaN(scheduledAtDate.getTime())) {
+      throw new BadRequestException('Invalid scheduledAt date format');
+    }
+
+    const durationMinutes = dto.durationMinutes ?? 50;
+
+    // Check opening window rule
+    const activeTemplates = await this.prisma.client.tutorRecurringSchedule.findMany({
+      where: { tutorId, isActive: true },
+      select: { openingWindowDays: true },
+    });
+
+    const maxWindowDays = activeTemplates.length > 0
+      ? Math.max(...activeTemplates.map(t => t.openingWindowDays))
+      : 7;
+
+    const limitDate = new Date(Date.now() + maxWindowDays * 24 * 60 * 60 * 1000);
+    if (scheduledAtDate < new Date() || scheduledAtDate > limitDate) {
+      throw new BadRequestException(
+        `Casual booking date must be between now and the tutor's opening window (${maxWindowDays} days in advance)`,
+      );
+    }
+
+    // Check overlaps
+    const overlap = await this.checkOverlap(tutorId, scheduledAtDate, durationMinutes);
+    if (overlap) {
+      throw new ConflictException({
+        message: 'Time slot overlaps with an existing booking or recurring schedule template',
+        conflictType: overlap.conflictType,
+        conflict: overlap.conflict,
+      });
+    }
+
+    // If pre-booking a student, verify they exist
+    if (dto.studentId) {
+      await this.ensureStudents([dto.studentId]);
+    }
+
+    const booking = await this.prisma.client.booking.create({
+      data: {
+        tutorId,
+        studentId: dto.studentId,
+        createdBy: BookingCreatedBy.TUTOR,
+        status: BookingStatus.SCHEDULED,
+        liveClassStatus: LiveClassStatus.SCHEDULED,
+        topic: dto.title,
+        note: dto.description,
+        tags: dto.tags || [],
+        tutorBookingType: TutorBookingType.CASUAL,
+        scheduledAt: scheduledAtDate,
+        durationMinutes,
+      },
+      include: this.bookingInclude,
+    });
+
+    // Send notifications
+    if (dto.studentId) {
+      await this.notificationService.createMany([dto.studentId], {
+        type: 'BOOKING_SCHEDULED',
+        title: 'New scheduled booking',
+        message: `Your tutor scheduled a class: ${booking.topic || 'Class'}.`,
+        data: {
+          bookingId: booking.id,
+          tutorId,
+          scheduledAt: booking.scheduledAt?.toISOString() ?? null,
+        },
+      });
+    }
+
+    return {
+      message: 'Casual booking scheduled successfully',
+      data: booking,
+    };
+  }
+
+  async getTutorBookings(tutorId: string) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+    return this.prisma.client.booking.findMany({
+      where: { tutorId },
+      include: this.bookingInclude,
+      orderBy: { scheduledAt: 'desc' },
+    });
+  }
+
+  async getTutorBookingById(tutorId: string, bookingId: string) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+    const booking = await this.prisma.client.booking.findFirst({
+      where: { id: bookingId, tutorId },
+      include: this.bookingInclude,
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    return booking;
   }
 }

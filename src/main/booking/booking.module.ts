@@ -1,11 +1,15 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { ScheduleModule } from '@nestjs/schedule';
 import { BookingService } from './services/booking.service';
+import { TutorScheduleService } from './services/tutor-schedule.service';
+import { BookingSchedulerService } from './services/booking-scheduler.service';
 import { BookingAdminController } from './controllers/booking.admin.controller';
 import { BookingTutorController } from './controllers/booking.tutor.controller';
 import { BookingStudentController } from './controllers/booking.student.controller';
 import { BookingCommonController } from './controllers/booking.common.controller';
+import { TutorScheduleController } from './controllers/tutor-schedule.controller';
 import { NotificationModule } from '../notification/notification.module';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
 import { MediaRoomManagerService } from './services/media-room-manager.service';
@@ -18,9 +22,12 @@ import { LiveClassSocketAuthService } from './services/live-class-socket-auth.se
     JwtModule.register({}),
     NotificationModule,
     GoogleCalendarModule,
+    ScheduleModule.forRoot(),
   ],
   providers: [
     BookingService,
+    TutorScheduleService,
+    BookingSchedulerService,
     MediaRoomManagerService,
     BookingLiveClassGateway,
     LiveClassSocketAuthService,
@@ -30,6 +37,7 @@ import { LiveClassSocketAuthService } from './services/live-class-socket-auth.se
     BookingTutorController,
     BookingStudentController,
     BookingCommonController,
+    TutorScheduleController,
   ],
 })
 export class BookingModule {}

@@ -621,7 +621,11 @@ export class SessionService {
 
   private async getParticipantStudents(booking: SessionBooking) {
     const students = new Map<string, SessionParticipantUser>();
-    students.set(booking.student.id, booking.student);
+
+    if (booking.student) {
+      students.set(booking.student.id, booking.student);
+    }
+
     const participantRows = await this.findBookingParticipantRows(booking.id);
 
     for (const participant of participantRows) {

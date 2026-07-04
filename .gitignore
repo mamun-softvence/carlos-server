@@ -62,3 +62,4 @@ branch_structure.json
 
 # Security scan results
 security-scan-results/
+api-audit-results/

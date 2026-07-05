@@ -642,14 +642,19 @@ export class StudentService {
     if (booking.isPackage) {
       const groupKey = booking.recurringScheduleId || booking.groupBookingId;
       if (groupKey) {
+        const orConditions: Prisma.BookingWhereInput[] = [];
+        if (booking.recurringScheduleId) {
+          orConditions.push({ recurringScheduleId: booking.recurringScheduleId });
+        }
+        if (booking.groupBookingId) {
+          orConditions.push({ groupBookingId: booking.groupBookingId });
+        }
+
         const segments = await this.prisma.client.booking.findMany({
           where: {
             AND: [
               {
-                OR: [
-                  { recurringScheduleId: booking.recurringScheduleId || undefined },
-                  { groupBookingId: booking.groupBookingId || undefined },
-                ],
+                OR: orConditions,
               },
               {
                 OR: [

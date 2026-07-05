@@ -1421,8 +1421,11 @@ export class BookingService {
       throw new NotFoundException('Booking slot not found');
     }
 
-    if (booking.studentId) {
-      throw new BadRequestException('This booking slot is already taken');
+    const alreadyJoined = await this.prisma.client.bookingParticipant.findFirst({
+      where: { bookingId, studentId },
+    });
+    if (alreadyJoined) {
+      throw new BadRequestException('You are already booked for this slot');
     }
 
     if (booking.status === BookingStatus.CANCELLED) {
@@ -1446,11 +1449,13 @@ export class BookingService {
       return tx.booking.update({
         where: { id: bookingId },
         data: {
-          studentId,
+          studentId: booking.studentId || studentId,
           status: BookingStatus.SCHEDULED,
           creditCost: 1,
           creditDeductedAt: new Date(),
-          participants: this.createBookingParticipants([studentId]),
+          participants: {
+            create: { studentId },
+          },
         },
         include: this.bookingInclude,
       });
@@ -1483,13 +1488,17 @@ export class BookingService {
       throw new NotFoundException('Recurring schedule package not found');
     }
 
-    // Find all future unbooked slots of the package
+    // Find all future slots of the package where student is not registered
     const unbookedSessions = await this.prisma.client.booking.findMany({
       where: {
         recurringScheduleId,
-        studentId: null,
         status: BookingStatus.SCHEDULED,
         scheduledAt: { gte: new Date() },
+        NOT: {
+          participants: {
+            some: { studentId },
+          },
+        },
       },
       orderBy: { scheduledAt: 'asc' },
     });
@@ -1523,16 +1532,18 @@ export class BookingService {
         },
       });
 
-      // Update all unbooked bookings
+      // Update all bookings
       const updatedBookings = [];
       for (const session of unbookedSessions) {
         const updated = await tx.booking.update({
           where: { id: session.id },
           data: {
-            studentId,
+            studentId: session.studentId || studentId,
             creditCost: 1,
             creditDeductedAt: new Date(),
-            participants: this.createBookingParticipants([studentId]),
+            participants: {
+              create: { studentId },
+            },
           },
           include: this.bookingInclude,
         });
@@ -1621,6 +1632,11 @@ export class BookingService {
       where: {
         id: { in: bookingIds },
       },
+      include: {
+        participants: {
+          select: { studentId: true },
+        },
+      },
     });
 
     if (bookings.length !== bookingIds.length) {
@@ -1629,8 +1645,9 @@ export class BookingService {
 
     // Validation checks
     for (const booking of bookings) {
-      if (booking.studentId) {
-        throw new BadRequestException(`Booking slot ${booking.id} is already taken`);
+      const alreadyJoined = booking.participants.some((p) => p.studentId === studentId);
+      if (alreadyJoined) {
+        throw new BadRequestException(`You are already booked for slot ${booking.id}`);
       }
       if (booking.status === BookingStatus.CANCELLED) {
         throw new BadRequestException(`Booking slot ${booking.id} is cancelled`);
@@ -1671,11 +1688,13 @@ export class BookingService {
         const updated = await tx.booking.update({
           where: { id: booking.id },
           data: {
-            studentId,
+            studentId: booking.studentId || studentId,
             status: BookingStatus.SCHEDULED,
             creditCost: 1,
             creditDeductedAt: new Date(),
-            participants: this.createBookingParticipants([studentId]),
+            participants: {
+              create: { studentId },
+            },
           },
           include: this.bookingInclude,
         });

@@ -132,6 +132,7 @@ model Booking {
   tutorBookingType    TutorBookingType? // Added tutorBookingType
   recurringScheduleId String?           // Added recurringScheduleId
   isPackage           Boolean          @default(false)
+  groupBookingId      String?
 
   requestedDate      DateTime?
   requestedTimeLabel String?
@@ -175,6 +176,7 @@ model Booking {
   @@index([createdBy])
   @@index([liveClassStatus])
   @@index([recurringScheduleId])
+  @@index([groupBookingId])
   @@map("bookings")
 }
 

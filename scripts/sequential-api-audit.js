@@ -188,7 +188,7 @@ async function ensureServerReachable() {
   let lastError = null;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
-      const response = await fetch(`${BASE_URL}/`);
+      const response = await fetch(`${BASE_URL}/docs/`);
       if (response.ok) {
         return;
       }
@@ -721,9 +721,9 @@ async function runAudit() {
       description: 'Recurring QA slot',
       tags: ['qa', 'weekly'],
       frequency: 'WEEKLY',
-      dayOfWeek: 1,
+      dayOfWeek: [1],
       timeOfDay: FIXED_DATES.recurringTimeOfDay,
-      durationMinutes: 50,
+      durationHours: 1,
       openingWindowDays: 7,
     },
   );
@@ -750,9 +750,9 @@ async function runAudit() {
       description: 'Updated recurring QA slot',
       tags: ['qa', 'weekly', 'updated'],
       frequency: 'WEEKLY',
-      dayOfWeek: 1,
+      dayOfWeek: [1],
       timeOfDay: FIXED_DATES.recurringTimeOfDay,
-      durationMinutes: 50,
+      durationHours: 1,
       openingWindowDays: 30,
     },
   );

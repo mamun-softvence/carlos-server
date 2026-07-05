@@ -250,11 +250,12 @@ Deletes the schedule template and immediately deletes all future unbooked slots 
 ## 4. Casual (One-Off) Bookings
 
 ### Create a Casual Booking Slot
-Schedules a single one-off class directly. Bypasses admin approval.
+Schedules one or more back-to-back one-off class slots directly. Bypasses admin approval.
 * **Route**: `POST /tutor/bookings/casual`
 * **Request Parameters**:
   * `scheduledAt` (Required): ISO date string. Must be within the tutor's maximum `openingWindowDays` (fallback 7 days if no templates exist) and not in the past.
-  * `durationMinutes` (Optional): Must be `50`.
+  * `durationMinutes` (Optional): Must be `50` (deprecated in favor of `durationHours`).
+  * `durationHours` (Optional): Number of back-to-back 50-minute booking sessions to generate (1 to 5, default `1`). If `durationHours > 1`, they are automatically treated as a package (`isPackage: true`).
   * `studentId` (Optional): UUID of a student if pre-assigned.
   * `title` (Optional): Topic.
   * `description` (Optional): Notes.
@@ -266,7 +267,9 @@ Schedules a single one-off class directly. Bypasses admin approval.
     -H "Content-Type: application/json" \
     -d '{
       "scheduledAt": "2026-07-12T10:00:00.000Z",
+      "durationHours": 2,
       "title": "Special Kinematics Q&A",
+      "description": "Kinematics prep and equations guide",
       "tags": ["Physics"]
     }'
   ```
@@ -280,15 +283,53 @@ Schedules a single one-off class directly. Bypasses admin approval.
       "tutorId": "tutor-uuid-1111",
       "createdBy": "TUTOR",
       "status": "SCHEDULED",
-      "topic": "Special Kinematics Q&A",
+      "topic": "Special Kinematics Q&A (Session 1/2)",
+      "note": "Kinematics prep and equations guide",
       "tags": ["Physics"],
       "tutorBookingType": "CASUAL",
       "scheduledAt": "2026-07-12T10:00:00.000Z",
       "durationMinutes": 50,
+      "isPackage": true,
       "liveClassStatus": "SCHEDULED",
       "createdAt": "2026-07-04T08:52:00.000Z",
       "updatedAt": "2026-07-04T08:52:00.000Z"
-    }
+    },
+    "bookings": [
+      {
+        "id": "booking-uuid-7777",
+        "studentId": null,
+        "tutorId": "tutor-uuid-1111",
+        "createdBy": "TUTOR",
+        "status": "SCHEDULED",
+        "topic": "Special Kinematics Q&A (Session 1/2)",
+        "note": "Kinematics prep and equations guide",
+        "tags": ["Physics"],
+        "tutorBookingType": "CASUAL",
+        "scheduledAt": "2026-07-12T10:00:00.000Z",
+        "durationMinutes": 50,
+        "isPackage": true,
+        "liveClassStatus": "SCHEDULED",
+        "createdAt": "2026-07-04T08:52:00.000Z",
+        "updatedAt": "2026-07-04T08:52:00.000Z"
+      },
+      {
+        "id": "booking-uuid-8888",
+        "studentId": null,
+        "tutorId": "tutor-uuid-1111",
+        "createdBy": "TUTOR",
+        "status": "SCHEDULED",
+        "topic": "Special Kinematics Q&A (Session 2/2)",
+        "note": "Kinematics prep and equations guide",
+        "tags": ["Physics"],
+        "tutorBookingType": "CASUAL",
+        "scheduledAt": "2026-07-12T11:00:00.000Z",
+        "durationMinutes": 50,
+        "isPackage": true,
+        "liveClassStatus": "SCHEDULED",
+        "createdAt": "2026-07-04T08:52:00.000Z",
+        "updatedAt": "2026-07-04T08:52:00.000Z"
+      }
+    ]
   }
   ```
 
@@ -347,6 +388,55 @@ The query result payloads for `Booking` will now include:
 ---
 
 ## 8. Student Booking Actions
+
+### Search Available Bookings
+Search, filter, and paginate available (unbooked) class slots in the system.
+* **Route**: `GET /student/bookings/available`
+* **Query Parameters**:
+  * `page` (Optional): Page number (min 1, default `1`).
+  * `limit` (Optional): Max items per page (min 1, max 100, default `10`).
+  * `sortOrder` (Optional): Chronological order by scheduled date (`asc` | `desc`, default `asc`).
+  * `search` (Optional): Case-insensitive string search matching against the tutor name, topic/title, or description/notes.
+* **cURL Request**:
+  ```bash
+  curl -X GET "http://localhost:3000/api/v1/student/bookings/available?page=1&limit=2&sortOrder=asc&search=Physics" \
+    -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+  ```
+* **Response Sample (200 OK)**:
+  ```json
+  {
+    "message": "Available bookings retrieved successfully",
+    "data": [
+      {
+        "id": "booking-uuid-7777",
+        "studentId": null,
+        "tutorId": "tutor-uuid-1111",
+        "createdBy": "TUTOR",
+        "status": "SCHEDULED",
+        "topic": "Special Kinematics Q&A (Session 1/2)",
+        "note": "Kinematics prep and equations guide",
+        "tags": ["Physics"],
+        "tutorBookingType": "CASUAL",
+        "scheduledAt": "2026-07-12T10:00:00.000Z",
+        "durationMinutes": 50,
+        "isPackage": true,
+        "liveClassStatus": "SCHEDULED",
+        "tutor": {
+          "id": "tutor-uuid-1111",
+          "name": "QA Tutor",
+          "email": "tutor@example.com",
+          "avatarUrl": "http://localhost:3000/avatar.png"
+        }
+      }
+    ],
+    "meta": {
+      "total": 1,
+      "page": 1,
+      "limit": 2,
+      "totalPages": 1
+    }
+  }
+  ```
 
 ### Book a Single Non-Package Open Slot
 Claims a single unbooked class slot (casual or recurring where `isPackage: false`).

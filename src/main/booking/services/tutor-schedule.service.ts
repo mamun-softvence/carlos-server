@@ -36,7 +36,8 @@ export class TutorScheduleService {
     startOfWeek.setDate(startDate.getDate() - startDate.getDay());
     startOfWeek.setHours(0, 0, 0, 0);
 
-    let current = new Date(base.getTime() + 1000);
+    let current = new Date(base);
+    current.setDate(current.getDate() + 1);
     while (true) {
       const currentDay = current.getDay();
       if (dayOfWeek.includes(currentDay)) {
@@ -271,19 +272,7 @@ export class TutorScheduleService {
     const durationHours = dto.durationHours || 1;
     const isPackage = dto.isPackage !== undefined ? dto.isPackage : true;
 
-    // Validate maximum slots in a single package constraint (maximum 5 slots)
-    if (isPackage) {
-      const estimatedOccurrences = dto.occurrencesConfig && dto.occurrencesConfig.length > 0
-        ? dto.occurrencesConfig.length
-        : this.getEstimatedOccurrencesCount(startDate, dto.frequency, dto.openingWindowDays, dto.dayOfWeek, dto.endDate);
 
-      const totalSlots = estimatedOccurrences * durationHours;
-      if (totalSlots > 5) {
-        throw new BadRequestException(
-          `Maximum total slots in a single package is limited to 5. You requested/estimated ${totalSlots} slots.`,
-        );
-      }
-    }
 
     // 1. Verify that there are no overlaps for the calculated base nextDate (for all H hours)
     const nextDate = this.getNextOccurrence(dto.frequency, startDate, new Date(), dto.dayOfWeek);
@@ -432,19 +421,7 @@ export class TutorScheduleService {
       throw new BadRequestException('endDate must be after the calculated start date');
     }
 
-    // Validate maximum slots in a single package constraint (maximum 5 slots)
-    if (isPackage) {
-      const estimatedOccurrences = dto.occurrencesConfig && dto.occurrencesConfig.length > 0
-        ? dto.occurrencesConfig.length
-        : this.getEstimatedOccurrencesCount(startDate, frequency, dto.openingWindowDays ?? existing.openingWindowDays, dayOfWeek, endDate);
 
-      const totalSlots = estimatedOccurrences * durationHours;
-      if (totalSlots > 5) {
-        throw new BadRequestException(
-          `Maximum total slots in a single package is limited to 5. You requested/estimated ${totalSlots} slots.`,
-        );
-      }
-    }
 
     // Check base overlap at next occurrence if timing changes
     if (

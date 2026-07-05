@@ -567,10 +567,113 @@ export class StudentService {
       },
     });
 
+    const groupedBookings: any[] = [];
+    const packageGroups = new Map<string, any>();
+
+    for (const booking of bookings) {
+      if (booking.isPackage && (booking.recurringScheduleId || booking.groupBookingId)) {
+        const groupKey = (booking.recurringScheduleId || booking.groupBookingId) as string;
+        if (!packageGroups.has(groupKey)) {
+          const packageObj = {
+            id: booking.id,
+            isPackage: true,
+            recurringScheduleId: booking.recurringScheduleId,
+            groupBookingId: booking.groupBookingId,
+            topic: booking.topic ? booking.topic.replace(/\s*\(Session \d+\/\d+\)$/, '') : 'Class Package',
+            note: booking.note,
+            tags: booking.tags,
+            tutorBookingType: booking.tutorBookingType,
+            scheduledAt: booking.scheduledAt,
+            durationMinutes: booking.durationMinutes,
+            status: booking.status,
+            createdBy: booking.createdBy,
+            liveClassStatus: booking.liveClassStatus,
+            tutorId: booking.tutorId,
+            tutor: booking.tutor,
+            segments: [booking],
+          };
+          packageGroups.set(groupKey, packageObj);
+          groupedBookings.push(packageObj);
+        } else {
+          const packageObj = packageGroups.get(groupKey);
+          packageObj.segments.push(booking);
+          // Sort segments chronologically by scheduledAt
+          packageObj.segments.sort((a: any, b: any) => {
+            const timeA = a.scheduledAt ? new Date(a.scheduledAt).getTime() : 0;
+            const timeB = b.scheduledAt ? new Date(b.scheduledAt).getTime() : 0;
+            return timeA - timeB;
+          });
+          // Update scheduledAt to the earliest slot
+          packageObj.scheduledAt = packageObj.segments[0].scheduledAt;
+          // Calculate sum of durationMinutes of segments
+          packageObj.durationMinutes = packageObj.segments.reduce((sum: number, seg: any) => sum + (seg.durationMinutes || 0), 0);
+        }
+      } else {
+        groupedBookings.push(booking);
+      }
+    }
+
     return {
       message: 'Student bookings fetched successfully',
-      data: bookings,
+      data: groupedBookings,
     };
+  }
+
+  async getBookingDetails(studentId: string, bookingId: string) {
+    const booking = await this.prisma.client.booking.findFirst({
+      where: {
+        id: bookingId,
+        OR: [
+          { studentId },
+          {
+            participants: {
+              some: { studentId },
+            },
+          },
+        ],
+      },
+      include: this.bookingInclude,
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.isPackage) {
+      const groupKey = booking.recurringScheduleId || booking.groupBookingId;
+      if (groupKey) {
+        const segments = await this.prisma.client.booking.findMany({
+          where: {
+            AND: [
+              {
+                OR: [
+                  { recurringScheduleId: booking.recurringScheduleId || undefined },
+                  { groupBookingId: booking.groupBookingId || undefined },
+                ],
+              },
+              {
+                OR: [
+                  { studentId },
+                  {
+                    participants: {
+                      some: { studentId },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+          include: this.bookingInclude,
+          orderBy: { scheduledAt: 'asc' },
+        });
+        return {
+          ...booking,
+          segments,
+        };
+      }
+    }
+
+    return booking;
   }
 
   async updateProfile(studentId: string, dto: UpdateStudentProfileDto) {

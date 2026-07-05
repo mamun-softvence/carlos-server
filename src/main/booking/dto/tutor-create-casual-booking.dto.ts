@@ -6,6 +6,8 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Min,
+  Max,
 } from 'class-validator';
 
 export class TutorCreateCasualBookingDto {
@@ -33,4 +35,10 @@ export class TutorCreateCasualBookingDto {
   @IsInt()
   @Equals(50, { message: 'durationMinutes must be exactly 50' })
   durationMinutes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  durationHours?: number;
 }

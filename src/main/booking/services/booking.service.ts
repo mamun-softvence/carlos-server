@@ -25,6 +25,8 @@ import { NotificationService } from '../../notification/services/notification.se
 import { MediaRoomManagerService } from './media-room-manager.service';
 import { GoogleCalendarService } from '../../google-calendar/google-calendar.service';
 import { TutorCreateCasualBookingDto } from '../dto/tutor-create-casual-booking.dto';
+import { StudentSearchBookingsDto } from '../dto/student-search-bookings.dto';
+import { StudentBookBatchDto } from '../dto/student-book-batch.dto';
 
 type BookingRuleRow = {
   id: string;
@@ -1295,7 +1297,8 @@ export class BookingService {
       throw new BadRequestException('Invalid scheduledAt date format');
     }
 
-    const durationMinutes = dto.durationMinutes ?? 50;
+    const durationHours = dto.durationHours ?? 1;
+    const isPackage = durationHours > 1;
 
     // Check opening window rule
     const activeTemplates = await this.prisma.client.tutorRecurringSchedule.findMany({
@@ -1314,14 +1317,17 @@ export class BookingService {
       );
     }
 
-    // Check overlaps
-    const overlap = await this.checkOverlap(tutorId, scheduledAtDate, durationMinutes);
-    if (overlap) {
-      throw new ConflictException({
-        message: 'Time slot overlaps with an existing booking or recurring schedule template',
-        conflictType: overlap.conflictType,
-        conflict: overlap.conflict,
-      });
+    // Check overlaps for all segments
+    for (let i = 0; i < durationHours; i++) {
+      const slotTime = new Date(scheduledAtDate.getTime() + i * 60 * 60 * 1000);
+      const overlap = await this.checkOverlap(tutorId, slotTime, 50);
+      if (overlap) {
+        throw new ConflictException({
+          message: 'Time slot overlaps with an existing booking or recurring schedule template',
+          conflictType: overlap.conflictType,
+          conflict: overlap.conflict,
+        });
+      }
     }
 
     // If pre-booking a student, verify they exist
@@ -1329,40 +1335,55 @@ export class BookingService {
       await this.ensureStudents([dto.studentId]);
     }
 
-    const booking = await this.prisma.client.booking.create({
-      data: {
-        tutorId,
-        studentId: dto.studentId,
-        createdBy: BookingCreatedBy.TUTOR,
-        status: BookingStatus.SCHEDULED,
-        liveClassStatus: LiveClassStatus.SCHEDULED,
-        topic: dto.title,
-        note: dto.description,
-        tags: dto.tags || [],
-        tutorBookingType: TutorBookingType.CASUAL,
-        scheduledAt: scheduledAtDate,
-        durationMinutes,
-      },
-      include: this.bookingInclude,
-    });
+    const groupBookingId = isPackage ? randomUUID() : null;
 
-    // Send notifications
-    if (dto.studentId) {
+    const bookings = [];
+    for (let i = 0; i < durationHours; i++) {
+      const slotTime = new Date(scheduledAtDate.getTime() + i * 60 * 60 * 1000);
+      const topic = dto.title || 'Lesson Slot';
+      const displayTopic = durationHours > 1
+        ? `${topic} (Session ${i + 1}/${durationHours})`
+        : topic;
+
+      const booking = await this.prisma.client.booking.create({
+        data: {
+          tutorId,
+          studentId: dto.studentId || null,
+          createdBy: BookingCreatedBy.TUTOR,
+          status: BookingStatus.SCHEDULED,
+          liveClassStatus: LiveClassStatus.SCHEDULED,
+          topic: displayTopic,
+          note: dto.description || '',
+          tags: dto.tags || [],
+          tutorBookingType: TutorBookingType.CASUAL,
+          scheduledAt: slotTime,
+          durationMinutes: 50,
+          isPackage,
+          groupBookingId,
+        },
+        include: this.bookingInclude,
+      });
+      bookings.push(booking);
+    }
+
+    // Send notifications using the first booking info
+    if (dto.studentId && bookings.length > 0) {
       await this.notificationService.createMany([dto.studentId], {
         type: 'BOOKING_SCHEDULED',
         title: 'New scheduled booking',
-        message: `Your tutor scheduled a class: ${booking.topic || 'Class'}.`,
+        message: `Your tutor scheduled a class: ${dto.title || 'Class'}.`,
         data: {
-          bookingId: booking.id,
+          bookingId: bookings[0].id,
           tutorId,
-          scheduledAt: booking.scheduledAt?.toISOString() ?? null,
+          scheduledAt: bookings[0].scheduledAt?.toISOString() ?? null,
         },
       });
     }
 
     return {
       message: 'Casual booking scheduled successfully',
-      data: booking,
+      data: bookings[0],
+      bookings: bookings,
     };
   }
 
@@ -1536,6 +1557,149 @@ export class BookingService {
 
     return {
       message: `Package booked successfully. Confirmed ${result.length} sessions.`,
+      data: result,
+    };
+  }
+
+  async searchAvailableBookings(studentId: string, dto: StudentSearchBookingsDto) {
+    await this.ensureUserRole(studentId, UserRole.STUDENT);
+
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 10;
+    const sortOrder = dto.sortOrder ?? 'asc';
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.BookingWhereInput = {
+      studentId: null,
+      status: BookingStatus.SCHEDULED,
+      scheduledAt: { gte: new Date() },
+    };
+
+    if (dto.search) {
+      const searchPattern = dto.search;
+      where.OR = [
+        { topic: { contains: searchPattern, mode: 'insensitive' } },
+        { note: { contains: searchPattern, mode: 'insensitive' } },
+        {
+          tutor: {
+            name: { contains: searchPattern, mode: 'insensitive' },
+          },
+        },
+      ];
+    }
+
+    const [bookings, total] = await Promise.all([
+      this.prisma.client.booking.findMany({
+        where,
+        include: this.bookingInclude,
+        orderBy: { scheduledAt: sortOrder },
+        skip,
+        take: limit,
+      }),
+      this.prisma.client.booking.count({ where }),
+    ]);
+
+    return {
+      message: 'Available bookings retrieved successfully',
+      data: bookings,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async studentBookBatch(studentId: string, dto: StudentBookBatchDto) {
+    await this.ensureUserRole(studentId, UserRole.STUDENT);
+
+    const bookingIds = dto.bookingIds;
+
+    // Retrieve requested bookings
+    const bookings = await this.prisma.client.booking.findMany({
+      where: {
+        id: { in: bookingIds },
+      },
+    });
+
+    if (bookings.length !== bookingIds.length) {
+      throw new NotFoundException('One or more booking slots not found');
+    }
+
+    // Validation checks
+    for (const booking of bookings) {
+      if (booking.studentId) {
+        throw new BadRequestException(`Booking slot ${booking.id} is already taken`);
+      }
+      if (booking.status === BookingStatus.CANCELLED) {
+        throw new BadRequestException(`Booking slot ${booking.id} is cancelled`);
+      }
+      if (booking.scheduledAt && booking.scheduledAt <= new Date()) {
+        throw new BadRequestException(`Booking slot ${booking.id} is in the past`);
+      }
+    }
+
+    const requiredCredits = bookings.length;
+
+    const result = await this.prisma.client.$transaction(async (tx) => {
+      const creditBalance = await tx.studentCreditBalance.findUnique({
+        where: { studentId },
+        select: { totalCredits: true },
+      });
+
+      if (!creditBalance || creditBalance.totalCredits < requiredCredits) {
+        throw new BadRequestException(
+          `Not enough credits. Required: ${requiredCredits}, Available: ${creditBalance?.totalCredits || 0}`,
+        );
+      }
+
+      // Deduct credits
+      await tx.studentCreditBalance.updateMany({
+        where: {
+          studentId,
+          totalCredits: { gte: requiredCredits },
+        },
+        data: {
+          totalCredits: { decrement: requiredCredits },
+        },
+      });
+
+      // Update all bookings
+      const updatedBookings = [];
+      for (const booking of bookings) {
+        const updated = await tx.booking.update({
+          where: { id: booking.id },
+          data: {
+            studentId,
+            status: BookingStatus.SCHEDULED,
+            creditCost: 1,
+            creditDeductedAt: new Date(),
+            participants: this.createBookingParticipants([studentId]),
+          },
+          include: this.bookingInclude,
+        });
+        updatedBookings.push(updated);
+      }
+
+      return updatedBookings;
+    });
+
+    // Send confirmations
+    for (const b of result) {
+      await this.notificationService.createMany([studentId], {
+        type: 'BOOKING_SCHEDULED',
+        title: 'Booking confirmed',
+        message: `Your booking for ${b.topic || 'Class'} is confirmed.`,
+        data: {
+          bookingId: b.id,
+          scheduledAt: b.scheduledAt?.toISOString() ?? null,
+        },
+      });
+    }
+
+    return {
+      message: `Successfully booked ${result.length} sessions.`,
       data: result,
     };
   }

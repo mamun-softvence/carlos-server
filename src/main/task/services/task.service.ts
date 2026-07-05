@@ -6,13 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  BookingStatus,
-  Prisma,
-  TaskStatus,
-  UserRole,
-  UserStatus,
-} from '@prisma/client';
+import { Prisma, TaskStatus, UserRole, UserStatus } from '@prisma/client';
 import { CreateTaskDto } from '../dto/create-task.dto';
 import { TaskQueryDto } from '../dto/task-query.dto';
 import { NotificationService } from '../../notification/services/notification.service';
@@ -138,9 +132,9 @@ export class TaskService {
       throw new ForbiddenException('You cannot assign tasks to this booking');
     }
 
-    if (booking.status !== BookingStatus.SCHEDULED || !booking.scheduledAt) {
+    if (!booking.scheduledAt) {
       throw new BadRequestException(
-        'Tasks can only be assigned to scheduled bookings',
+        'Tasks can only be assigned to bookings with a scheduled time',
       );
     }
 

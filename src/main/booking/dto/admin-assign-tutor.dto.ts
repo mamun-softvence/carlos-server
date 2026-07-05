@@ -1,11 +1,10 @@
 import {
+  Equals,
   IsDateString,
   IsInt,
   IsOptional,
   IsString,
   IsUUID,
-  Max,
-  Min,
 } from 'class-validator';
 
 export class AdminAssignTutorDto {
@@ -16,8 +15,7 @@ export class AdminAssignTutorDto {
   scheduledAt!: string;
 
   @IsInt()
-  @Min(1)
-  @Max(300)
+  @Equals(50, { message: 'durationMinutes must be 50' })
   durationMinutes!: number;
 
   @IsOptional()

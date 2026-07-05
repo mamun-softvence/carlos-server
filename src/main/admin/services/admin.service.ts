@@ -4,11 +4,27 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole, UserStatus } from '@prisma/client';
+import { BookingStatus, UserRole, UserStatus } from '@prisma/client';
+import { AdminAnalyticsQueryDto } from '../dto/admin-analytics-query.dto';
 
 @Injectable()
 export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private readonly monthLabels = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ] as const;
 
   private readonly userListSelect = {
     id: true,
@@ -41,6 +57,17 @@ export class AdminService {
     return { start, end };
   }
 
+  private getTargetYear(year?: number) {
+    return year ?? new Date().getUTCFullYear();
+  }
+
+  private getYearRange(year: number) {
+    return {
+      start: new Date(Date.UTC(year, 0, 1)),
+      end: new Date(Date.UTC(year + 1, 0, 1)),
+    };
+  }
+
   private getPercentageChange(currentValue: number, previousValue: number) {
     if (previousValue === 0) {
       return currentValue === 0 ? 0 : 100;
@@ -53,6 +80,14 @@ export class AdminService {
 
   private toMajorUnit(amountMinor: number) {
     return Number((amountMinor / 100).toFixed(2));
+  }
+
+  private createEmptyMonthlySeries() {
+    return Array.from({ length: 12 }, () => 0);
+  }
+
+  private toMonthIndex(date: Date) {
+    return date.getUTCMonth();
   }
 
   async getOverview() {
@@ -205,6 +240,162 @@ export class AdminService {
           currentMonthTotalRevenueMinor,
           previousMonthTotalRevenueMinor,
         ),
+      },
+    };
+  }
+
+  async getRevenueGrowth(query: AdminAnalyticsQueryDto) {
+    const year = this.getTargetYear(query.year);
+    const currentYearRange = this.getYearRange(year);
+    const previousYearRange = this.getYearRange(year - 1);
+
+    const [currentYearPayments, previousYearPayments] = await Promise.all([
+      this.prisma.client.studentSubscriptionPayment.findMany({
+        where: {
+          status: 'paid',
+          paidAt: {
+            gte: currentYearRange.start,
+            lt: currentYearRange.end,
+          },
+        },
+        select: {
+          amountPaid: true,
+          paidAt: true,
+        },
+        orderBy: {
+          paidAt: 'asc',
+        },
+      }),
+      this.prisma.client.studentSubscriptionPayment.findMany({
+        where: {
+          status: 'paid',
+          paidAt: {
+            gte: previousYearRange.start,
+            lt: previousYearRange.end,
+          },
+        },
+        select: {
+          amountPaid: true,
+          paidAt: true,
+        },
+      }),
+    ]);
+
+    const monthlyRevenueMinor = this.createEmptyMonthlySeries();
+
+    for (const payment of currentYearPayments) {
+      if (!payment.paidAt) {
+        continue;
+      }
+
+      const monthIndex = this.toMonthIndex(payment.paidAt);
+      monthlyRevenueMinor[monthIndex] += payment.amountPaid;
+    }
+
+    const totalRevenueMinor = currentYearPayments.reduce(
+      (sum, payment) => sum + payment.amountPaid,
+      0,
+    );
+    const previousYearTotalRevenueMinor = previousYearPayments.reduce(
+      (sum, payment) => sum + payment.amountPaid,
+      0,
+    );
+
+    const series = monthlyRevenueMinor.map((amountMinor) =>
+      this.toMajorUnit(amountMinor),
+    );
+    const labels = [...this.monthLabels];
+    const chart = labels.map((month, index) => ({
+      month,
+      revenue: series[index],
+    }));
+
+    return {
+      message: 'Admin revenue growth fetched successfully',
+      data: {
+        year,
+        totalRevenue: this.toMajorUnit(totalRevenueMinor),
+        previousYearTotalRevenue: this.toMajorUnit(
+          previousYearTotalRevenueMinor,
+        ),
+        yearlyGrowthPercentage: this.getPercentageChange(
+          totalRevenueMinor,
+          previousYearTotalRevenueMinor,
+        ),
+        labels,
+        series,
+        chart,
+      },
+    };
+  }
+
+  async getClassDistribution(query: AdminAnalyticsQueryDto) {
+    const year = this.getTargetYear(query.year);
+    const yearRange = this.getYearRange(year);
+
+    const bookings = await this.prisma.client.booking.findMany({
+      where: {
+        status: {
+          in: [BookingStatus.SCHEDULED, BookingStatus.COMPLETED],
+        },
+        scheduledAt: {
+          gte: yearRange.start,
+          lt: yearRange.end,
+        },
+      },
+      select: {
+        scheduledAt: true,
+        participants: {
+          select: {
+            studentId: true,
+          },
+        },
+      },
+      orderBy: {
+        scheduledAt: 'asc',
+      },
+    });
+
+    const groupClasses = this.createEmptyMonthlySeries();
+    const privateSessions = this.createEmptyMonthlySeries();
+
+    for (const booking of bookings) {
+      if (!booking.scheduledAt) {
+        continue;
+      }
+
+      const monthIndex = this.toMonthIndex(booking.scheduledAt);
+      const participantCount = booking.participants.length;
+
+      if (participantCount > 1) {
+        groupClasses[monthIndex] += 1;
+      } else {
+        privateSessions[monthIndex] += 1;
+      }
+    }
+
+    const labels = [...this.monthLabels];
+    const chart = labels.map((month, index) => ({
+      month,
+      groupClasses: groupClasses[index],
+      privateSessions: privateSessions[index],
+    }));
+
+    return {
+      message: 'Admin class distribution fetched successfully',
+      data: {
+        year,
+        labels,
+        groupClasses,
+        privateSessions,
+        totals: {
+          groupClasses: groupClasses.reduce((sum, count) => sum + count, 0),
+          privateSessions: privateSessions.reduce(
+            (sum, count) => sum + count,
+            0,
+          ),
+        },
+        chart,
       },
     };
   }

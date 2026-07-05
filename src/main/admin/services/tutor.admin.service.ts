@@ -1,5 +1,9 @@
 import { PrismaService } from '@/lib/prisma/prisma.service';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateAdminUserDto } from '../dto/create-admin-user.dto';
 import * as bcrypt from 'bcrypt';
 import { UserRole } from '@prisma/client';
@@ -53,6 +57,40 @@ export class TutorAdminService {
 
     return {
       message: `${role.toLowerCase()} created successfully`,
+      data: user,
+    };
+  }
+
+  async deleteUser(userId: string) {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: userId },
+      select: this.userResponseSelect,
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.role === UserRole.ADMIN) {
+      throw new BadRequestException(
+        'Admin accounts cannot be deleted from this route',
+      );
+    }
+
+    if (![UserRole.STUDENT, UserRole.TUTOR].includes(user.role)) {
+      throw new BadRequestException(
+        'Only student and tutor accounts can be deleted from this route',
+      );
+    }
+
+    await this.prisma.client.user.delete({
+      where: {
+        id: userId,
+      },
+    });
+
+    return {
+      message: `${user.role.toLowerCase()} deleted successfully`,
       data: user,
     };
   }

@@ -1,14 +1,13 @@
 import {
   ArrayMinSize,
   ArrayUnique,
+  Equals,
   IsDateString,
   IsArray,
   IsInt,
   IsOptional,
   IsString,
   IsUUID,
-  Max,
-  Min,
 } from 'class-validator';
 
 export class TutorCreateBookingDto {
@@ -27,8 +26,7 @@ export class TutorCreateBookingDto {
   scheduledAt!: string;
 
   @IsInt()
-  @Min(1)
-  @Max(300)
+  @Equals(50, { message: 'durationMinutes must be 50' })
   durationMinutes!: number;
 
   @IsOptional()

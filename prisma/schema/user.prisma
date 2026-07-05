@@ -60,6 +60,10 @@ model User {
   phoneNumber           String?
   timeZone              String?
   googleCalendarEnabled Boolean  @default(false)
+  googleCalendarEmail   String?
+  googleCalendarAccessToken String?
+  googleCalendarRefreshToken String?
+  googleCalendarTokenExpiry DateTime?
   password              String?
   role                  UserRole @default(STUDENT)
 
@@ -81,11 +85,13 @@ model User {
   resetCodeExpiry DateTime?
   resetVerified   Boolean   @default(false)
 
-  studentBookings       Booking[]            @relation("StudentBookings")
-  tutorBookings         Booking[]            @relation("TutorBookings")
-  adminAssignedBookings Booking[]            @relation("AdminAssignedBookings")
-  bookingParticipations BookingParticipant[] @relation("StudentBookingParticipants")
-  liveClassMessages     LiveClassMessage[]
+  studentBookings        Booking[]               @relation("StudentBookings")
+  tutorBookings          Booking[]               @relation("TutorBookings")
+  adminAssignedBookings  Booking[]               @relation("AdminAssignedBookings")
+  bookingParticipations  BookingParticipant[]    @relation("StudentBookingParticipants")
+  liveClassMessages      LiveClassMessage[]
+  savedLiveClassMessages SavedLiveClassMessage[]
+  googleCalendarBookingEvents GoogleCalendarBookingEvent[]
 
   studentSubscriptions StudentSubscription[]
   subscriptionPayments StudentSubscriptionPayment[]
@@ -99,6 +105,9 @@ model User {
   assignedTasksAsStudent  Task[]                           @relation("StudentTasks")
   assignedTasksAsTutor    Task[]                           @relation("TutorTasks")
 
+  recurringSchedulesAsTutor   TutorRecurringSchedule[] @relation("TutorRecurringSchedules")
+  recurringSchedulesAsStudent TutorRecurringSchedule[] @relation("StudentRecurringSchedules")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -110,7 +119,7 @@ model User {
 
 model Booking {
   id                String           @id @default(uuid())
-  studentId         String
+  studentId         String?          // Changed from String to String?
   tutorId           String?
   assignedByAdminId String?
   createdBy         BookingCreatedBy
@@ -118,6 +127,12 @@ model Booking {
 
   topic String?
   note  String?
+  tags  String[]                     // Added tags field
+
+  tutorBookingType    TutorBookingType? // Added tutorBookingType
+  recurringScheduleId String?           // Added recurringScheduleId
+  isPackage           Boolean          @default(false)
+  groupBookingId      String?
 
   requestedDate      DateTime?
   requestedTimeLabel String?
@@ -141,13 +156,17 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  student           User                   @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
-  tutor             User?                  @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
-  assignedByAdmin   User?                  @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
-  participants      BookingParticipant[]
-  liveClassMessages LiveClassMessage[]
-  competencyLogs    StudentLogCompetency[]
-  tasks             Task[]
+  student                User?                   @relation("StudentBookings", fields: [studentId], references: [id], onDelete: SetNull) // Changed to User? and SetNull
+  tutor                  User?                   @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: SetNull)
+  assignedByAdmin        User?                   @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
+  recurringSchedule      TutorRecurringSchedule? @relation(fields: [recurringScheduleId], references: [id], onDelete: SetNull) // Added recurringSchedule relation
+  participants           BookingParticipant[]
+  liveClassMessages      LiveClassMessage[]
+  competencyLogs         StudentLogCompetency[]
+  tasks                  Task[]
+  savedLiveClassMessages SavedLiveClassMessage[]
+  sharedSessionPdfs      SessionSharedPdf[]
+  googleCalendarBookingEvents GoogleCalendarBookingEvent[]
 
   @@index([studentId])
   @@index([tutorId])
@@ -156,6 +175,8 @@ model Booking {
   @@index([scheduledAt])
   @@index([createdBy])
   @@index([liveClassStatus])
+  @@index([recurringScheduleId])
+  @@index([groupBookingId])
   @@map("bookings")
 }
 
@@ -183,12 +204,60 @@ model LiveClassMessage {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  sender  User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  booking               Booking                @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  sender                User                   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  savedLiveClassMessage SavedLiveClassMessage?
 
   @@index([bookingId, createdAt])
   @@index([senderId])
   @@map("live_class_messages")
+}
+
+model SavedLiveClassMessage {
+  id        String   @id @default(uuid())
+  bookingId String
+  messageId String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  message LiveClassMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User?            @relation(fields: [userId], references: [id])
+  userId  String?
+
+  @@index([bookingId, createdAt])
+  @@map("saved_live_class_messages")
+}
+
+model SessionSharedPdf {
+  id        String   @id @default(uuid())
+  bookingId String
+  title     String
+  pdfUrl    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+  @@map("session_shared_pdfs")
+}
+
+model GoogleCalendarBookingEvent {
+  id              String   @id @default(uuid())
+  bookingId       String
+  userId          String
+  externalEventId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, userId])
+  @@index([bookingId])
+  @@index([userId])
+  @@map("google_calendar_booking_events")
 }
 
 model MessageConversation {
@@ -428,4 +497,51 @@ model StudentCreditBalance {
   student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@map("student_credit_balances")
+}
+
+enum TutorBookingType {
+  CASUAL
+  RECURRING
+}
+
+enum RecurringFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+}
+
+model TutorRecurringSchedule {
+  id                 String             @id @default(uuid())
+  tutorId            String
+  studentId          String?
+  title              String?
+  description        String?
+  tags               String[]
+
+  frequency          RecurringFrequency @default(WEEKLY)
+  dayOfWeek          Int[]
+  dayOfMonth         Int?
+  timeOfDay          String
+  startDate          DateTime
+  endDate            DateTime?
+  durationHours      Int                @default(1)
+  isPackage          Boolean            @default(true)
+
+  openingWindowDays  Int                @default(7)
+  isActive           Boolean            @default(true)
+  lastGeneratedUpTo  DateTime?
+
+  occurrencesConfig  Json?
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  tutor              User               @relation("TutorRecurringSchedules", fields: [tutorId], references: [id], onDelete: Cascade)
+  student            User?              @relation("StudentRecurringSchedules", fields: [studentId], references: [id], onDelete: SetNull)
+  bookings           Booking[]
+
+  @@index([tutorId])
+  @@index([isActive])
+  @@map("tutor_recurring_schedules")
 }

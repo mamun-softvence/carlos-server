@@ -29,7 +29,7 @@ export class BookingTutorController {
             '70a24771-98df-441f-ad2b-79ab2fe8fd63',
           ],
           scheduledAt: '2026-04-12T14:00:00.000Z',
-          durationMinutes: 60,
+          durationMinutes: 50,
           topic: 'Physics Problem Solving Session',
           note: 'Cover motion equations, vectors, and exam practice.',
         },

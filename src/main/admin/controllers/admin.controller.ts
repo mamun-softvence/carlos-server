@@ -12,6 +12,7 @@ import {
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { AdminAnalyticsQueryDto } from '../dto/admin-analytics-query.dto';
+import { AdminUserQueryDto } from '../dto/admin-user-query.dto';
 import { UpdateUserStatusDto } from '../dto/update-user-status.dto';
 import { AdminService } from '../services/admin.service';
 
@@ -42,15 +43,15 @@ export class AdminController {
   }
 
   @Get('students')
-  @ApiOperation({ summary: 'Get all students' })
-  getAllStudents() {
-    return this.adminService.getAllStudents();
+  @ApiOperation({ summary: 'Get all students with pagination and search' })
+  getAllStudents(@Query() query: AdminUserQueryDto) {
+    return this.adminService.getAllStudents(query);
   }
 
   @Get('tutors')
-  @ApiOperation({ summary: 'Get all tutors' })
-  getAllTutors() {
-    return this.adminService.getAllTutors();
+  @ApiOperation({ summary: 'Get all tutors with pagination and search' })
+  getAllTutors(@Query() query: AdminUserQueryDto) {
+    return this.adminService.getAllTutors(query);
   }
 
   @Patch('users/:userId/status')

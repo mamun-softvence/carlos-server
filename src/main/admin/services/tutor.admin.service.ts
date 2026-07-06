@@ -7,7 +7,7 @@ import {
 import { CreateAdminUserDto } from '../dto/create-admin-user.dto';
 import { UpdateTutorRolesDto } from '../dto/update-tutor-roles.dto';
 import * as bcrypt from 'bcrypt';
-import { UserRole } from '@prisma/client';
+import { UserRole, TutorSubRole } from '@prisma/client';
 
 @Injectable()
 export class TutorAdminService {
@@ -45,7 +45,7 @@ export class TutorAdminService {
   } as const;
 
   async createUser(dto: CreateAdminUserDto) {
-    const { name, password, email, role } = dto;
+    const { name, password, email, role, tutorRoles } = dto;
 
     const existing = await this.prisma.client.user.findUnique({
       where: { email },
@@ -63,6 +63,23 @@ export class TutorAdminService {
     }
 
     const isTutor = role === UserRole.TUTOR;
+    let finalTutorRoles: TutorSubRole[] | undefined = undefined;
+
+    if (isTutor) {
+      if (tutorRoles !== undefined) {
+        if (!Array.isArray(tutorRoles) || tutorRoles.length === 0) {
+          throw new BadRequestException('A teacher must have at least one role assigned');
+        }
+        for (const r of tutorRoles) {
+          if (!Object.values(TutorSubRole).includes(r)) {
+            throw new BadRequestException(`Invalid tutor role: ${r}`);
+          }
+        }
+        finalTutorRoles = tutorRoles;
+      } else {
+        finalTutorRoles = [TutorSubRole.REGULAR];
+      }
+    }
 
     const user = await this.prisma.client.user.create({
       data: {
@@ -70,7 +87,7 @@ export class TutorAdminService {
         email,
         password: hashedPassword,
         role,
-        tutorRoles: isTutor ? ['REGULAR'] : undefined,
+        tutorRoles: finalTutorRoles,
       },
       select: isTutor ? this.tutorResponseSelect : this.studentResponseSelect,
     });

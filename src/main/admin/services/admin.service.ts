@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { BookingStatus, UserRole, UserStatus } from '@prisma/client';
 import { AdminAnalyticsQueryDto } from '../dto/admin-analytics-query.dto';
+import { AdminUserQueryDto } from '../dto/admin-user-query.dto';
 
 @Injectable()
 export class AdminService {
@@ -413,37 +414,85 @@ export class AdminService {
     };
   }
 
-  async getAllStudents() {
-    const students = await this.prisma.client.user.findMany({
-      where: {
-        role: UserRole.STUDENT,
-      },
-      select: this.studentListSelect,
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async getAllStudents(query: AdminUserQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      role: UserRole.STUDENT,
+    };
+
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { email: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [students, total] = await Promise.all([
+      this.prisma.client.user.findMany({
+        where,
+        select: this.studentListSelect,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip,
+        take: limit,
+      }),
+      this.prisma.client.user.count({ where }),
+    ]);
 
     return {
       message: 'Students fetched successfully',
       data: students,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 
-  async getAllTutors() {
-    const tutors = await this.prisma.client.user.findMany({
-      where: {
-        role: UserRole.TUTOR,
-      },
-      select: this.tutorListSelect,
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+  async getAllTutors(query: AdminUserQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      role: UserRole.TUTOR,
+    };
+
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { email: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [tutors, total] = await Promise.all([
+      this.prisma.client.user.findMany({
+        where,
+        select: this.tutorListSelect,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip,
+        take: limit,
+      }),
+      this.prisma.client.user.count({ where }),
+    ]);
 
     return {
       message: 'Tutors fetched successfully',
       data: tutors,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
 

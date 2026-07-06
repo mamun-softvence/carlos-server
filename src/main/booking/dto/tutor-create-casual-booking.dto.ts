@@ -8,7 +8,9 @@ import {
   IsUUID,
   Min,
   Max,
+  IsEnum,
 } from 'class-validator';
+import { LessonType } from '@prisma/client';
 
 export class TutorCreateCasualBookingDto {
   @IsOptional()
@@ -41,4 +43,8 @@ export class TutorCreateCasualBookingDto {
   @Min(1)
   @Max(5)
   durationHours?: number;
+
+  @IsOptional()
+  @IsEnum(LessonType)
+  lessonType?: LessonType;
 }

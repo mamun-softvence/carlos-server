@@ -14,7 +14,7 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { RecurringFrequency } from '@prisma/client';
+import { RecurringFrequency, LessonType } from '@prisma/client';
 
 export class OccurrenceConfigItem {
   @IsDate()
@@ -103,4 +103,8 @@ export class TutorCreateRecurringScheduleDto {
   @ValidateNested({ each: true })
   @Type(() => OccurrenceConfigItem)
   occurrencesConfig?: OccurrenceConfigItem[];
+
+  @IsOptional()
+  @IsEnum(LessonType)
+  lessonType?: LessonType;
 }

@@ -26,7 +26,7 @@ export class AdminService {
     'Dec',
   ] as const;
 
-  private readonly userListSelect = {
+  private readonly studentListSelect = {
     id: true,
     name: true,
     email: true,
@@ -34,6 +34,19 @@ export class AdminService {
     status: true,
     avatarUrl: true,
     avatarPublicId: true,
+    createdAt: true,
+    updatedAt: true,
+  } as const;
+
+  private readonly tutorListSelect = {
+    id: true,
+    name: true,
+    email: true,
+    role: true,
+    status: true,
+    avatarUrl: true,
+    avatarPublicId: true,
+    tutorRoles: true,
     createdAt: true,
     updatedAt: true,
   } as const;
@@ -405,7 +418,7 @@ export class AdminService {
       where: {
         role: UserRole.STUDENT,
       },
-      select: this.userListSelect,
+      select: this.studentListSelect,
       orderBy: {
         createdAt: 'desc',
       },
@@ -422,7 +435,7 @@ export class AdminService {
       where: {
         role: UserRole.TUTOR,
       },
-      select: this.userListSelect,
+      select: this.tutorListSelect,
       orderBy: {
         createdAt: 'desc',
       },
@@ -437,7 +450,6 @@ export class AdminService {
   async updateUserStatus(userId: string, status: UserStatus) {
     const user = await this.prisma.client.user.findUnique({
       where: { id: userId },
-      select: this.userListSelect,
     });
 
     if (!user) {
@@ -456,6 +468,8 @@ export class AdminService {
       );
     }
 
+    const isTutor = user.role === UserRole.TUTOR;
+
     const updatedUser =
       user.status === status
         ? user
@@ -465,7 +479,7 @@ export class AdminService {
               status,
               refreshToken: status === UserStatus.ACTIVE ? undefined : null,
             },
-            select: this.userListSelect,
+            select: isTutor ? this.tutorListSelect : this.studentListSelect,
           });
 
     return {

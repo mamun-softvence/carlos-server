@@ -7,9 +7,11 @@ import {
   Param,
   Post,
   UseGuards,
+  Patch,
 } from '@nestjs/common';
 import { TutorAdminService } from '../services/tutor.admin.service';
 import { CreateAdminUserDto } from '../dto/create-admin-user.dto';
+import { UpdateTutorRolesDto } from '../dto/update-tutor-roles.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -64,5 +66,18 @@ export class TutorAdminController {
   })
   deleteUser(@Param('userId') userId: string) {
     return this.tutorAdminService.deleteUser(userId);
+  }
+
+  @ApiBearerAuth()
+  @Patch('tutors/:tutorId/roles')
+  @ApiOperation({
+    summary: 'Update tutor sub-roles',
+    description: 'Admin can add, change, or remove sub-roles of a teacher.',
+  })
+  updateTutorRoles(
+    @Param('tutorId') tutorId: string,
+    @Body() dto: UpdateTutorRolesDto,
+  ) {
+    return this.tutorAdminService.updateTutorRoles(tutorId, dto);
   }
 }

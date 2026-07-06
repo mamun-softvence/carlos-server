@@ -1,5 +1,6 @@
 import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { Type } from 'class-transformer';
+import { LessonType } from '@prisma/client';
 
 export enum SortOrder {
   ASC = 'asc',
@@ -26,4 +27,8 @@ export class StudentSearchBookingsDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsEnum(LessonType)
+  lessonType?: LessonType;
 }

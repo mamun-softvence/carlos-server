@@ -4,6 +4,16 @@ enum UserRole {
   ADMIN
 }
 
+enum TutorSubRole {
+  REGULAR
+  CONVERSATION
+}
+
+enum LessonType {
+  REGULAR
+  CONVERSATION
+}
+
 enum AuthProvider {
   EMAIL
   GOOGLE
@@ -66,6 +76,7 @@ model User {
   googleCalendarTokenExpiry DateTime?
   password              String?
   role                  UserRole @default(STUDENT)
+  tutorRoles            TutorSubRole[] @default([])
 
   avatarPublicId String?
   avatarUrl      String?
@@ -130,6 +141,7 @@ model Booking {
   tags  String[]                     // Added tags field
 
   tutorBookingType    TutorBookingType? // Added tutorBookingType
+  lessonType          LessonType        @default(REGULAR)
   recurringScheduleId String?           // Added recurringScheduleId
   isPackage           Boolean          @default(false)
   groupBookingId      String?
@@ -527,8 +539,9 @@ model TutorRecurringSchedule {
   endDate            DateTime?
   durationHours      Int                @default(1)
   isPackage          Boolean            @default(true)
+  lessonType         LessonType         @default(REGULAR)
 
-  openingWindowDays  Int                @default(7)
+  openingWindowDays  Int                @default(30)
   isActive           Boolean            @default(true)
   lastGeneratedUpTo  DateTime?
 

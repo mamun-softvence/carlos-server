@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { RecurringFrequency, UserRole } from '@prisma/client';
+import { RecurringFrequency, UserRole, LessonType } from '@prisma/client';
 import { BookingService } from './booking.service';
 import { TutorCreateRecurringScheduleDto } from '../dto/tutor-create-recurring-schedule.dto';
 import { TutorUpdateRecurringScheduleDto } from '../dto/tutor-update-recurring-schedule.dto';
@@ -24,6 +24,7 @@ export class TutorScheduleService {
     if (!user || user.role !== UserRole.TUTOR) {
       throw new BadRequestException('User is not a tutor');
     }
+    return user;
   }
 
   getNextOccurrenceForMultipleWeekdays(
@@ -253,7 +254,10 @@ export class TutorScheduleService {
   }
 
   async createSchedule(tutorId: string, dto: TutorCreateRecurringScheduleDto) {
-    await this.ensureTutorRole(tutorId);
+    const tutor = await this.ensureTutorRole(tutorId);
+
+    const lessonType = dto.lessonType ?? LessonType.REGULAR;
+    this.bookingService.validateTutorLessonCapability(tutor, lessonType);
 
     this.validateRecurringScheduleDays(dto.frequency, dto.dayOfWeek, dto.dayOfMonth);
 
@@ -271,8 +275,6 @@ export class TutorScheduleService {
 
     const durationHours = dto.durationHours || 1;
     const isPackage = dto.isPackage !== undefined ? dto.isPackage : true;
-
-
 
     // 1. Verify that there are no overlaps for the calculated base nextDate (for all H hours)
     const nextDate = this.getNextOccurrence(dto.frequency, startDate, new Date(), dto.dayOfWeek);
@@ -347,6 +349,7 @@ export class TutorScheduleService {
         openingWindowDays: dto.openingWindowDays,
         occurrencesConfig: dto.occurrencesConfig ? JSON.parse(JSON.stringify(dto.occurrencesConfig)) : null,
         isActive: true,
+        lessonType,
       },
     });
 

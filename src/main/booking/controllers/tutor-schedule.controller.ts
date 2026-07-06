@@ -36,11 +36,13 @@ export class TutorScheduleController {
 
   @Post('recurring-schedules')
   @ApiOperation({ summary: 'Create a new recurring schedule slot' })
-  createSchedule(
+  async createSchedule(
     @CurrentUser() user: CurrentUserData,
     @Body() dto: TutorCreateRecurringScheduleDto,
   ) {
-    return this.tutorScheduleService.createSchedule(user.userId, dto);
+    const result = await this.tutorScheduleService.createSchedule(user.userId, dto);
+    await this.bookingSchedulerService.generateBookingsForSchedule(result.data);
+    return result;
   }
 
   @Get('recurring-schedules')

@@ -16,6 +16,8 @@ import {
   TutorBookingType,
   UserRole,
   UserStatus,
+  TutorSubRole,
+  LessonType,
 } from '@prisma/client';
 import { StudentCreateBookingRequestDto } from '../dto/student-create-booking-request.dto';
 import { AdminAssignTutorDto } from '../dto/admin-assign-tutor.dto';
@@ -227,6 +229,15 @@ export class BookingService {
     }
 
     return user;
+  }
+
+  public validateTutorLessonCapability(tutor: { tutorRoles: TutorSubRole[] }, lessonType: LessonType) {
+    if (lessonType === LessonType.CONVERSATION && !tutor.tutorRoles.includes(TutorSubRole.CONVERSATION)) {
+      throw new ForbiddenException('Tutor is not authorized to teach conversation lessons');
+    }
+    if (lessonType === LessonType.REGULAR && !tutor.tutorRoles.includes(TutorSubRole.REGULAR)) {
+      throw new ForbiddenException('Tutor is not authorized to teach regular lessons');
+    }
   }
 
   private getTutorBookingStudentIds(dto: TutorCreateBookingDto) {
@@ -1159,7 +1170,68 @@ export class BookingService {
     await this.googleCalendarService.syncBooking(bookingId);
   }
 
-  private getTemplateOccurrenceDateTime(startDate: Date, frequency: RecurringFrequency, index: number): Date {
+  private getNextOccurrenceForMultipleWeekdays(
+    base: Date,
+    frequency: RecurringFrequency,
+    dayOfWeek: number[],
+    startDate: Date,
+  ): Date {
+    const startOfWeek = new Date(startDate);
+    startOfWeek.setDate(startDate.getDate() - startDate.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+
+    const current = new Date(base);
+    current.setDate(current.getDate() + 1);
+    while (true) {
+      const currentDay = current.getDay();
+      if (dayOfWeek.includes(currentDay)) {
+        if (frequency === RecurringFrequency.WEEKLY) {
+          return current;
+        }
+        if (frequency === RecurringFrequency.BIWEEKLY) {
+          const currentSunday = new Date(current);
+          currentSunday.setDate(current.getDate() - current.getDay());
+          currentSunday.setHours(0, 0, 0, 0);
+
+          const diffMs = currentSunday.getTime() - startOfWeek.getTime();
+          const diffWeeks = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
+          if (diffWeeks % 2 === 0) {
+            return current;
+          }
+        }
+      }
+      current.setDate(current.getDate() + 1);
+      if (current.getTime() - base.getTime() > 1000 * 24 * 60 * 60 * 365) {
+        break; // safety cutoff
+      }
+    }
+    return current;
+  }
+
+  private getTemplateOccurrenceDateTime(
+    startDate: Date,
+    frequency: RecurringFrequency,
+    index: number,
+    dayOfWeek?: number[] | null,
+  ): Date {
+    if (
+      (frequency === RecurringFrequency.WEEKLY ||
+        frequency === RecurringFrequency.BIWEEKLY) &&
+      dayOfWeek &&
+      dayOfWeek.length > 0
+    ) {
+      let current = new Date(startDate);
+      for (let step = 0; step < index; step++) {
+        current = this.getNextOccurrenceForMultipleWeekdays(
+          current,
+          frequency,
+          dayOfWeek,
+          startDate,
+        );
+      }
+      return current;
+    }
+
     const date = new Date(startDate);
     if (frequency === RecurringFrequency.DAILY) {
       date.setDate(date.getDate() + index);
@@ -1173,7 +1245,12 @@ export class BookingService {
     return date;
   }
 
-  private getTemplateOccurrenceIndexAfter(startDate: Date, frequency: RecurringFrequency, baseDate: Date): number {
+  private getTemplateOccurrenceIndexAfter(
+    startDate: Date,
+    frequency: RecurringFrequency,
+    baseDate: Date,
+    dayOfWeek?: number[] | null,
+  ): number {
     const diffMs = baseDate.getTime() - startDate.getTime();
     if (diffMs <= 0) {
       return 0;
@@ -1183,9 +1260,13 @@ export class BookingService {
     if (frequency === RecurringFrequency.DAILY) {
       estimatedIndex = Math.floor(diffDays);
     } else if (frequency === RecurringFrequency.WEEKLY) {
-      estimatedIndex = Math.floor(diffDays / 7);
+      const multiplier =
+        dayOfWeek && dayOfWeek.length > 0 ? dayOfWeek.length : 1;
+      estimatedIndex = Math.floor((diffDays / 7) * multiplier);
     } else if (frequency === RecurringFrequency.BIWEEKLY) {
-      estimatedIndex = Math.floor(diffDays / 14);
+      const multiplier =
+        dayOfWeek && dayOfWeek.length > 0 ? dayOfWeek.length : 1;
+      estimatedIndex = Math.floor((diffDays / 14) * multiplier);
     } else if (frequency === RecurringFrequency.MONTHLY) {
       estimatedIndex = Math.floor(diffDays / 30.44);
     }
@@ -1196,10 +1277,21 @@ export class BookingService {
     frequency: RecurringFrequency,
     startDate: Date,
     baseDate: Date,
+    dayOfWeek?: number[] | null,
   ): Date {
-    let i = this.getTemplateOccurrenceIndexAfter(startDate, frequency, baseDate);
+    let i = this.getTemplateOccurrenceIndexAfter(
+      startDate,
+      frequency,
+      baseDate,
+      dayOfWeek,
+    );
     while (true) {
-      const occurrence = this.getTemplateOccurrenceDateTime(startDate, frequency, i);
+      const occurrence = this.getTemplateOccurrenceDateTime(
+        startDate,
+        frequency,
+        i,
+        dayOfWeek,
+      );
       if (occurrence > baseDate) {
         return occurrence;
       }
@@ -1215,7 +1307,10 @@ export class BookingService {
     scheduledAt: Date,
     durationMinutes: number,
     excludeId?: string,
-  ): Promise<{ conflictType: 'BOOKING' | 'RECURRING_TEMPLATE'; conflict: any } | null> {
+  ): Promise<{
+    conflictType: 'BOOKING' | 'RECURRING_TEMPLATE';
+    conflict: any;
+  } | null> {
     const start = scheduledAt;
     const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
 
@@ -1265,11 +1360,20 @@ export class BookingService {
 
     for (const temp of templates) {
       // Calculate the duration in minutes for the template
-      const tempDurationMinutes = (temp.durationHours * 60) - 10;
+      const tempDurationMinutes = temp.durationHours * 60 - 10;
       // Calculate the single candidate occurrence of this template that could overlap
-      const checkBase = new Date(start.getTime() - tempDurationMinutes * 60 * 1000);
-      const occurrence = this.getTemplateNextOccurrence(temp.frequency, temp.startDate, checkBase);
-      const tempEnd = new Date(occurrence.getTime() + tempDurationMinutes * 60 * 1000);
+      const checkBase = new Date(
+        start.getTime() - tempDurationMinutes * 60 * 1000,
+      );
+      const occurrence = this.getTemplateNextOccurrence(
+        temp.frequency,
+        temp.startDate,
+        checkBase,
+        temp.dayOfWeek,
+      );
+      const tempEnd = new Date(
+        occurrence.getTime() + tempDurationMinutes * 60 * 1000,
+      );
 
       // Check if it overlaps with the requested slot
       if (occurrence < end && tempEnd > start) {
@@ -1290,7 +1394,10 @@ export class BookingService {
   }
 
   async createCasualBooking(tutorId: string, dto: TutorCreateCasualBookingDto) {
-    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+    const tutor = await this.ensureUserRole(tutorId, UserRole.TUTOR);
+
+    const lessonType = dto.lessonType ?? LessonType.REGULAR;
+    this.validateTutorLessonCapability(tutor, lessonType);
 
     const scheduledAtDate = new Date(dto.scheduledAt);
     if (Number.isNaN(scheduledAtDate.getTime())) {
@@ -1300,20 +1407,9 @@ export class BookingService {
     const durationHours = dto.durationHours ?? 1;
     const isPackage = durationHours > 1;
 
-    // Check opening window rule
-    const activeTemplates = await this.prisma.client.tutorRecurringSchedule.findMany({
-      where: { tutorId, isActive: true },
-      select: { openingWindowDays: true },
-    });
-
-    const maxWindowDays = activeTemplates.length > 0
-      ? Math.max(...activeTemplates.map(t => t.openingWindowDays))
-      : 7;
-
-    const limitDate = new Date(Date.now() + maxWindowDays * 24 * 60 * 60 * 1000);
-    if (scheduledAtDate < new Date() || scheduledAtDate > limitDate) {
+    if (scheduledAtDate < new Date()) {
       throw new BadRequestException(
-        `Casual booking date must be between now and the tutor's opening window (${maxWindowDays} days in advance)`,
+        'Casual booking date must be in the future',
       );
     }
 
@@ -1360,6 +1456,7 @@ export class BookingService {
           durationMinutes: 50,
           isPackage,
           groupBookingId,
+          lessonType,
         },
         include: this.bookingInclude,
       });
@@ -1598,6 +1695,8 @@ export class BookingService {
         },
       ];
     }
+
+    where.lessonType = dto.lessonType ?? LessonType.REGULAR;
 
     const [bookings, total] = await Promise.all([
       this.prisma.client.booking.findMany({

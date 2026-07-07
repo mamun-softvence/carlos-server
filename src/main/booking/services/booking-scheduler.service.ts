@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { randomUUID } from 'crypto';
 import {
   BookingCreatedBy,
   BookingStatus,
@@ -49,6 +50,17 @@ export class BookingSchedulerService {
 
       let generatedCount = 0;
 
+      const blockedRanges = (schedule.blockedDateRanges as any[]) || [];
+      const isDateBlocked = (date: Date): boolean => {
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        const dateStr = `${yyyy}-${mm}-${dd}`;
+        return blockedRanges.some((range) => {
+          return dateStr >= range.startDate && dateStr <= range.endDate;
+        });
+      };
+
       const configArray = schedule.occurrencesConfig as any[];
       if (configArray && Array.isArray(configArray) && configArray.length > 0) {
         // Dedicated occurrence datetime generation
@@ -63,6 +75,11 @@ export class BookingSchedulerService {
 
           // Skip if it exceeds the template's end date
           if (schedule.endDate && scheduledAt > schedule.endDate) {
+            continue;
+          }
+
+          // Skip if the date is blocked
+          if (isDateBlocked(scheduledAt)) {
             continue;
           }
 
@@ -87,6 +104,7 @@ export class BookingSchedulerService {
               schedule.tutorId,
               slotTime,
               50,
+              schedule.id,
             );
             if (overlap) {
               hasOverlap = true;
@@ -96,6 +114,9 @@ export class BookingSchedulerService {
 
           if (!hasOverlap) {
             try {
+              const occurrenceGroupId = schedule.isPackage
+                ? randomUUID()
+                : null;
               for (let i = 0; i < schedule.durationHours; i++) {
                 const slotTime = new Date(
                   scheduledAt.getTime() + i * 60 * 60 * 1000,
@@ -120,10 +141,11 @@ export class BookingSchedulerService {
                     tags,
                     tutorBookingType: TutorBookingType.RECURRING,
                     recurringScheduleId: schedule.id,
+                    groupBookingId: occurrenceGroupId,
                     scheduledAt: slotTime,
                     durationMinutes: 50,
                     isPackage: schedule.isPackage,
-                    lessonType: schedule.lessonType,
+                    lessonType: item.lessonType || schedule.lessonType,
                   },
                 });
                 generatedCount++;
@@ -163,6 +185,12 @@ export class BookingSchedulerService {
             break;
           }
 
+          // Skip if the date is blocked
+          if (isDateBlocked(nextOccurrence)) {
+            current = new Date(nextOccurrence.getTime());
+            continue;
+          }
+
           // Check if booking already exists for this template at this datetime
           const existingBooking = await this.prisma.client.booking.findFirst({
             where: {
@@ -182,6 +210,7 @@ export class BookingSchedulerService {
                 schedule.tutorId,
                 slotTime,
                 50,
+                schedule.id,
               );
               if (overlap) {
                 hasOverlap = true;
@@ -191,6 +220,9 @@ export class BookingSchedulerService {
 
             if (!hasOverlap) {
               try {
+                const occurrenceGroupId = schedule.isPackage
+                  ? randomUUID()
+                  : null;
                 for (let i = 0; i < schedule.durationHours; i++) {
                   const slotTime = new Date(
                     nextOccurrence.getTime() + i * 60 * 60 * 1000,
@@ -214,6 +246,7 @@ export class BookingSchedulerService {
                       tags: schedule.tags,
                       tutorBookingType: TutorBookingType.RECURRING,
                       recurringScheduleId: schedule.id,
+                      groupBookingId: occurrenceGroupId,
                       scheduledAt: slotTime,
                       durationMinutes: 50,
                       isPackage: schedule.isPackage,

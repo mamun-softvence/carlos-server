@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Patch,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
 import {
   ApiBearerAuth,
@@ -81,7 +74,9 @@ export class BookingCommonController {
   }
 
   @Get(':bookingId/live-class/messages')
-  @ApiOperation({ summary: 'Get persisted chat messages for a booking live class' })
+  @ApiOperation({
+    summary: 'Get persisted chat messages for a booking live class',
+  })
   getLiveClassMessages(
     @CurrentUser() user: CurrentUserData,
     @Param('bookingId') bookingId: string,

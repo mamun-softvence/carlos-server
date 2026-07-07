@@ -65,7 +65,10 @@ export class BookingLiveClassGateway
 
   async handleDisconnect(client: AuthenticatedSocket) {
     if (client.data.classSessionId) {
-      await this.mediaRoomManager.closePeer(client.data.classSessionId, client.id);
+      await this.mediaRoomManager.closePeer(
+        client.data.classSessionId,
+        client.id,
+      );
       client.leave(this.getSocketRoom(client.data.classSessionId));
     }
   }
@@ -110,8 +113,13 @@ export class BookingLiveClassGateway
         classSessionId: payload.classSessionId,
         liveClass,
         routerRtpCapabilities:
-          await this.mediaRoomManager.getRouterRtpCapabilities(payload.classSessionId),
-        producerIds: this.mediaRoomManager.getProducerIds(payload.classSessionId, client.id),
+          await this.mediaRoomManager.getRouterRtpCapabilities(
+            payload.classSessionId,
+          ),
+        producerIds: this.mediaRoomManager.getProducerIds(
+          payload.classSessionId,
+          client.id,
+        ),
       },
     };
   }

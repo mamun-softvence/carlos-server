@@ -1,11 +1,7 @@
 import { ENVEnum } from '@/common/enum/env.enum';
 import { PrismaService } from '@/lib/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
-import {
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-} from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { AuthProvider, TutorSubRole, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -95,6 +91,62 @@ export class AdminSeedService implements OnApplicationBootstrap {
       });
 
       this.logger.log(`Seed ${seedUser.label} created for ${seedUser.email}`);
+    }
+
+    // Seed Subscription Plans
+    const seedPlans = [
+      {
+        name: 'Trial Plan',
+        price: 0,
+        durationDays: 30,
+        creditsPerMonth: 200,
+        features: ['200 Live Classes', 'Private Dashboard', 'Message Support'],
+        isActive: true,
+        currency: 'usd',
+        billingInterval: 'month',
+      },
+      {
+        name: 'Basic Plan',
+        price: 29.00,
+        durationDays: 30,
+        creditsPerMonth: 10000,
+        features: ['10000 Live Classes', 'Private Dashboard', 'Priority Message Support', 'Google Calendar Sync'],
+        isActive: true,
+        currency: 'usd',
+        billingInterval: 'month',
+      },
+      {
+        name: 'Premium Plan',
+        price: 59.00,
+        durationDays: 30,
+        creditsPerMonth: 25000,
+        features: ['25000 Live Classes', 'Private Dashboard', '24/7 Message Support', 'Google Calendar Sync', 'Access to recordings'],
+        isActive: true,
+        currency: 'usd',
+        billingInterval: 'month',
+      },
+    ];
+
+    for (const plan of seedPlans) {
+      const existingPlan = await this.prisma.client.subscriptionPlan.findFirst({
+        where: { name: plan.name },
+      });
+
+      if (!existingPlan) {
+        await this.prisma.client.subscriptionPlan.create({
+          data: {
+            name: plan.name,
+            price: plan.price,
+            durationDays: plan.durationDays,
+            creditsPerMonth: plan.creditsPerMonth,
+            features: plan.features,
+            isActive: plan.isActive,
+            currency: plan.currency,
+            billingInterval: plan.billingInterval,
+          },
+        });
+        this.logger.log(`Subscription Plan ${plan.name} seeded`);
+      }
     }
   }
 }

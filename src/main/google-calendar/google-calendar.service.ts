@@ -112,12 +112,16 @@ export class GoogleCalendarService {
 
   async getStatus(userId: string) {
     const user = await this.getCalendarUserOrThrow(userId);
+    const requiresReconnect = await this.requiresCalendarReconnect(user);
+    const connected =
+      this.hasGoogleCalendarConnection(user) && !requiresReconnect;
 
     return {
       message: 'Google Calendar status fetched successfully',
       data: {
-        connected: this.hasGoogleCalendarConnection(user),
-        enabled: user.googleCalendarEnabled,
+        connected,
+        enabled: user.googleCalendarEnabled && connected,
+        requiresReconnect,
         googleEmail: user.googleCalendarEmail,
       },
     };
@@ -215,6 +219,11 @@ export class GoogleCalendarService {
 
     if (enabled && !this.hasGoogleCalendarConnection(user)) {
       throw new BadRequestException('Connect Google Calendar first');
+    }
+    if (enabled && (await this.requiresCalendarReconnect(user))) {
+      throw new BadRequestException(
+        'Reconnect Google Calendar to grant calendar access',
+      );
     }
 
     await this.prisma.client.user.update({
@@ -365,28 +374,39 @@ export class GoogleCalendarService {
     );
 
     for (const user of activeUsers.values()) {
-      const externalEventId = await this.upsertRemoteEvent(
-        user,
-        booking,
-        existingEventsByUserId.get(user.id)?.externalEventId,
-      );
+      try {
+        const externalEventId = await this.upsertRemoteEvent(
+          user,
+          booking,
+          existingEventsByUserId.get(user.id)?.externalEventId,
+        );
 
-      await this.prisma.client.googleCalendarBookingEvent.upsert({
-        where: {
-          bookingId_userId: {
+        await this.prisma.client.googleCalendarBookingEvent.upsert({
+          where: {
+            bookingId_userId: {
+              bookingId: booking.id,
+              userId: user.id,
+            },
+          },
+          create: {
             bookingId: booking.id,
             userId: user.id,
+            externalEventId,
           },
-        },
-        create: {
-          bookingId: booking.id,
-          userId: user.id,
-          externalEventId,
-        },
-        update: {
-          externalEventId,
-        },
-      });
+          update: {
+            externalEventId,
+          },
+        });
+      } catch (error) {
+        if (!this.isInsufficientGoogleScope(error)) {
+          throw error;
+        }
+
+        await this.markReconnectRequired(user.id);
+        this.logger.warn(
+          `Google Calendar reconnect required for user ${user.id}: ${this.getErrorMessage(error)}`,
+        );
+      }
     }
   }
 
@@ -631,10 +651,7 @@ export class GoogleCalendarService {
       primaryStudent?.name ?? primaryStudent?.email ?? 'Student',
       ...booking.participants
         .map((participant) => participant.student)
-        .filter(
-          (student) =>
-            student.id !== primaryStudent?.id,
-        )
+        .filter((student) => student.id !== primaryStudent?.id)
         .map((student) => student.name ?? student.email),
     ];
 
@@ -701,6 +718,19 @@ export class GoogleCalendarService {
     return response.data.email ?? null;
   }
 
+  private async fetchTokenScopes(accessToken: string) {
+    const response = await axios.get<{ scope?: string }>(
+      'https://oauth2.googleapis.com/tokeninfo',
+      {
+        params: {
+          access_token: accessToken,
+        },
+      },
+    );
+
+    return response.data.scope?.split(' ') ?? [];
+  }
+
   private async revokeToken(accessToken: string) {
     try {
       const params = new URLSearchParams({
@@ -743,6 +773,53 @@ export class GoogleCalendarService {
   private hasGoogleCalendarConnection(user: CalendarUser) {
     return Boolean(
       user.googleCalendarRefreshToken || user.googleCalendarAccessToken,
+    );
+  }
+
+  private async requiresCalendarReconnect(user: CalendarUser) {
+    if (!this.hasGoogleCalendarConnection(user)) {
+      return false;
+    }
+
+    try {
+      const accessToken = await this.getValidAccessToken(user);
+      const scopes = await this.fetchTokenScopes(accessToken);
+      return !scopes.includes(this.calendarScope);
+    } catch (error) {
+      if (this.isGoogleAuthError(error) || this.isInsufficientGoogleScope(error)) {
+        return true;
+      }
+
+      this.logger.warn(
+        `Unable to verify Google Calendar scope for user ${user.id}: ${this.getErrorMessage(error)}`,
+      );
+      return false;
+    }
+  }
+
+  private async markReconnectRequired(userId: string) {
+    await this.prisma.client.user.update({
+      where: { id: userId },
+      data: {
+        googleCalendarEnabled: false,
+      },
+    });
+  }
+
+  private isGoogleAuthError(error: unknown) {
+    return axios.isAxiosError(error) && error.response?.status === 401;
+  }
+
+  private isInsufficientGoogleScope(error: unknown) {
+    if (!axios.isAxiosError(error)) {
+      return false;
+    }
+
+    const message = this.getErrorMessage(error).toLowerCase();
+    return (
+      error.response?.status === 403 &&
+      (message.includes('insufficient authentication scopes') ||
+        message.includes('insufficient permissions'))
     );
   }
 

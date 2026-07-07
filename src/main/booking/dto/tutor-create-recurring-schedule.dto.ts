@@ -33,6 +33,10 @@ export class OccurrenceConfigItem {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @IsOptional()
+  @IsEnum(LessonType)
+  lessonType?: LessonType;
 }
 
 export class TutorCreateRecurringScheduleDto {
@@ -107,4 +111,24 @@ export class TutorCreateRecurringScheduleDto {
   @IsOptional()
   @IsEnum(LessonType)
   lessonType?: LessonType;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BlockedDateRangeDto)
+  blockedDateRanges?: BlockedDateRangeDto[];
+}
+
+export class BlockedDateRangeDto {
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'startDate must be in YYYY-MM-DD format',
+  })
+  startDate!: string;
+
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'endDate must be in YYYY-MM-DD format',
+  })
+  endDate!: string;
 }

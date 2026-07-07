@@ -10,6 +10,8 @@ import { BookingTutorController } from './controllers/booking.tutor.controller';
 import { BookingStudentController } from './controllers/booking.student.controller';
 import { BookingCommonController } from './controllers/booking.common.controller';
 import { TutorScheduleController } from './controllers/tutor-schedule.controller';
+import { StudentAvailabilityController } from './controllers/student-availability.controller';
+import { StudentTutorController } from './controllers/student-tutor.controller';
 import { NotificationModule } from '../notification/notification.module';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
 import { MediaRoomManagerService } from './services/media-room-manager.service';
@@ -38,6 +40,8 @@ import { LiveClassSocketAuthService } from './services/live-class-socket-auth.se
     BookingStudentController,
     BookingCommonController,
     TutorScheduleController,
+    StudentAvailabilityController,
+    StudentTutorController,
   ],
 })
 export class BookingModule {}

@@ -4,7 +4,15 @@ import {
 } from '@/common/dto/current-user.decorator';
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { StudentBookingQueryDto } from '../dto/student-booking-query.dto';
@@ -50,7 +58,9 @@ export class StudentController {
   }
 
   @Get('bookings/:id')
-  @ApiOperation({ summary: 'Get booking/package details for student including all segments' })
+  @ApiOperation({
+    summary: 'Get booking/package details for student including all segments',
+  })
   getBookingDetails(
     @CurrentUser() user: CurrentUserData,
     @Param('id') bookingId: string,

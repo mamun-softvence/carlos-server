@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -29,6 +30,15 @@ import { GoogleCalendarService } from '../../google-calendar/google-calendar.ser
 import { TutorCreateCasualBookingDto } from '../dto/tutor-create-casual-booking.dto';
 import { StudentSearchBookingsDto } from '../dto/student-search-bookings.dto';
 import { StudentBookBatchDto } from '../dto/student-book-batch.dto';
+import { TutorCreateAvailabilityDto } from '../dto/tutor-create-availability.dto';
+import { StudentBookAvailabilityDto } from '../dto/student-book-availability.dto';
+import { TutorGenerateAvailabilityDto } from '../dto/tutor-generate-availability.dto';
+import {
+  StudentTutorSearchQueryDto,
+  StudentTutorSortBy,
+} from '../dto/student-tutor-search-query.dto';
+import { StudentTutorScheduleQueryDto } from '../dto/student-tutor-schedule-query.dto';
+import { SortOrder } from '../dto/student-search-bookings.dto';
 
 type BookingRuleRow = {
   id: string;
@@ -63,6 +73,7 @@ type BookingStudentSummary = NonNullable<BookingWithParticipants['student']>;
 
 @Injectable()
 export class BookingService {
+  private readonly logger = new Logger(BookingService.name);
   private static readonly fixedLessonDurationMinutes = 50;
 
   constructor(
@@ -231,12 +242,35 @@ export class BookingService {
     return user;
   }
 
-  public validateTutorLessonCapability(tutor: { tutorRoles: TutorSubRole[] }, lessonType: LessonType) {
-    if (lessonType === LessonType.CONVERSATION && !tutor.tutorRoles.includes(TutorSubRole.CONVERSATION)) {
-      throw new ForbiddenException('Tutor is not authorized to teach conversation lessons');
+  public validateTutorLessonCapability(
+    tutor: { tutorRoles: TutorSubRole[] },
+    lessonType: LessonType,
+  ) {
+    if (
+      lessonType === LessonType.CONVERSATION &&
+      !tutor.tutorRoles.includes(TutorSubRole.CONVERSATION)
+    ) {
+      throw new ForbiddenException(
+        'Tutor is not authorized to teach conversation lessons',
+      );
     }
-    if (lessonType === LessonType.REGULAR && !tutor.tutorRoles.includes(TutorSubRole.REGULAR)) {
-      throw new ForbiddenException('Tutor is not authorized to teach regular lessons');
+    if (
+      lessonType === LessonType.REGULAR &&
+      !tutor.tutorRoles.includes(TutorSubRole.REGULAR)
+    ) {
+      throw new ForbiddenException(
+        'Tutor is not authorized to teach regular lessons',
+      );
+    }
+    if (lessonType === LessonType.BOTH) {
+      if (
+        !tutor.tutorRoles.includes(TutorSubRole.REGULAR) ||
+        !tutor.tutorRoles.includes(TutorSubRole.CONVERSATION)
+      ) {
+        throw new ForbiddenException(
+          'Tutor must have both regular and conversation roles to teach both lesson types',
+        );
+      }
     }
   }
 
@@ -1307,10 +1341,12 @@ export class BookingService {
     scheduledAt: Date,
     durationMinutes: number,
     excludeId?: string,
+    tx?: Prisma.TransactionClient,
   ): Promise<{
     conflictType: 'BOOKING' | 'RECURRING_TEMPLATE';
     conflict: any;
   } | null> {
+    const prisma = tx || this.prisma.client;
     const start = scheduledAt;
     const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
 
@@ -1318,7 +1354,7 @@ export class BookingService {
     const dayBefore = new Date(start.getTime() - 24 * 60 * 60 * 1000);
     const dayAfter = new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
-    const bookings = await this.prisma.client.booking.findMany({
+    const bookings = await prisma.booking.findMany({
       where: {
         tutorId,
         status: { not: BookingStatus.CANCELLED },
@@ -1350,7 +1386,7 @@ export class BookingService {
     }
 
     // 2. Check active recurring schedule templates for overlap
-    const templates = await this.prisma.client.tutorRecurringSchedule.findMany({
+    const templates = await prisma.tutorRecurringSchedule.findMany({
       where: {
         tutorId,
         isActive: true,
@@ -1419,7 +1455,8 @@ export class BookingService {
       const overlap = await this.checkOverlap(tutorId, slotTime, 50);
       if (overlap) {
         throw new ConflictException({
-          message: 'Time slot overlaps with an existing booking or recurring schedule template',
+          message:
+            'Time slot overlaps with an existing booking or recurring schedule template',
           conflictType: overlap.conflictType,
           conflict: overlap.conflict,
         });
@@ -1437,9 +1474,10 @@ export class BookingService {
     for (let i = 0; i < durationHours; i++) {
       const slotTime = new Date(scheduledAtDate.getTime() + i * 60 * 60 * 1000);
       const topic = dto.title || 'Lesson Slot';
-      const displayTopic = durationHours > 1
-        ? `${topic} (Session ${i + 1}/${durationHours})`
-        : topic;
+      const displayTopic =
+        durationHours > 1
+          ? `${topic} (Session ${i + 1}/${durationHours})`
+          : topic;
 
       const booking = await this.prisma.client.booking.create({
         data: {
@@ -1518,9 +1556,11 @@ export class BookingService {
       throw new NotFoundException('Booking slot not found');
     }
 
-    const alreadyJoined = await this.prisma.client.bookingParticipant.findFirst({
-      where: { bookingId, studentId },
-    });
+    const alreadyJoined = await this.prisma.client.bookingParticipant.findFirst(
+      {
+        where: { bookingId, studentId },
+      },
+    );
     if (alreadyJoined) {
       throw new BadRequestException('You are already booked for this slot');
     }
@@ -1568,6 +1608,8 @@ export class BookingService {
       },
     });
 
+    await this.syncGoogleCalendar(updated.id);
+
     return {
       message: 'Booking slot confirmed successfully',
       data: updated,
@@ -1577,15 +1619,17 @@ export class BookingService {
   async studentBookPackage(studentId: string, recurringScheduleId: string) {
     await this.ensureUserRole(studentId, UserRole.STUDENT);
 
-    const schedule = await this.prisma.client.tutorRecurringSchedule.findUnique({
-      where: { id: recurringScheduleId },
-    });
+    const schedule = await this.prisma.client.tutorRecurringSchedule.findUnique(
+      {
+        where: { id: recurringScheduleId },
+      },
+    );
 
     if (!schedule) {
       throw new NotFoundException('Recurring schedule package not found');
     }
 
-    // Find all future slots of the package where student is not registered
+    // Find future slots and book only the next occurrence group.
     const unbookedSessions = await this.prisma.client.booking.findMany({
       where: {
         recurringScheduleId,
@@ -1601,10 +1645,19 @@ export class BookingService {
     });
 
     if (unbookedSessions.length === 0) {
-      throw new BadRequestException('No unbooked sessions available in this package');
+      throw new BadRequestException(
+        'No unbooked sessions available in this package',
+      );
     }
 
-    const requiredCredits = unbookedSessions.length;
+    const firstSession = unbookedSessions[0];
+    const packageSessions = unbookedSessions.filter((session) => {
+      if (firstSession.groupBookingId) {
+        return session.groupBookingId === firstSession.groupBookingId;
+      }
+      return session.recurringScheduleId === recurringScheduleId;
+    });
+    const requiredCredits = packageSessions.length;
 
     const result = await this.prisma.client.$transaction(async (tx) => {
       const creditBalance = await tx.studentCreditBalance.findUnique({
@@ -1631,7 +1684,7 @@ export class BookingService {
 
       // Update all bookings
       const updatedBookings = [];
-      for (const session of unbookedSessions) {
+      for (const session of packageSessions) {
         const updated = await tx.booking.update({
           where: { id: session.id },
           data: {
@@ -1661,6 +1714,7 @@ export class BookingService {
           scheduledAt: b.scheduledAt?.toISOString() ?? null,
         },
       });
+      await this.syncGoogleCalendar(b.id);
     }
 
     return {
@@ -1669,7 +1723,10 @@ export class BookingService {
     };
   }
 
-  async searchAvailableBookings(studentId: string, dto: StudentSearchBookingsDto) {
+  async searchAvailableBookings(
+    studentId: string,
+    dto: StudentSearchBookingsDto,
+  ) {
     await this.ensureUserRole(studentId, UserRole.STUDENT);
 
     const page = dto.page ?? 1;
@@ -1744,19 +1801,28 @@ export class BookingService {
 
     // Validation checks
     for (const booking of bookings) {
-      const alreadyJoined = booking.participants.some((p) => p.studentId === studentId);
+      const alreadyJoined = booking.participants.some(
+        (p) => p.studentId === studentId,
+      );
       if (alreadyJoined) {
-        throw new BadRequestException(`You are already booked for slot ${booking.id}`);
+        throw new BadRequestException(
+          `You are already booked for slot ${booking.id}`,
+        );
       }
       if (booking.status === BookingStatus.CANCELLED) {
-        throw new BadRequestException(`Booking slot ${booking.id} is cancelled`);
+        throw new BadRequestException(
+          `Booking slot ${booking.id} is cancelled`,
+        );
       }
       if (booking.scheduledAt && booking.scheduledAt <= new Date()) {
-        throw new BadRequestException(`Booking slot ${booking.id} is in the past`);
+        throw new BadRequestException(
+          `Booking slot ${booking.id} is in the past`,
+        );
       }
     }
 
     const requiredCredits = bookings.length;
+    const batchGroupBookingId = randomUUID();
 
     const result = await this.prisma.client.$transaction(async (tx) => {
       const creditBalance = await tx.studentCreditBalance.findUnique({
@@ -1791,6 +1857,8 @@ export class BookingService {
             status: BookingStatus.SCHEDULED,
             creditCost: 1,
             creditDeductedAt: new Date(),
+            isPackage: true,
+            groupBookingId: batchGroupBookingId,
             participants: {
               create: { studentId },
             },
@@ -1814,11 +1882,737 @@ export class BookingService {
           scheduledAt: b.scheduledAt?.toISOString() ?? null,
         },
       });
+      await this.syncGoogleCalendar(b.id);
     }
 
     return {
       message: `Successfully booked ${result.length} sessions.`,
       data: result,
+    };
+  }
+
+  async createTutorAvailability(
+    tutorId: string,
+    dto: TutorCreateAvailabilityDto,
+  ) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+
+    const created = [];
+    for (const slot of dto.slots) {
+      const scheduledAt = new Date(slot.scheduledAt);
+      const durationMinutes = slot.durationMinutes ?? 50;
+
+      const dbSlot = await this.prisma.client.tutorAvailability.create({
+        data: {
+          tutorId,
+          scheduledAt,
+          durationMinutes,
+        },
+      });
+      created.push(dbSlot);
+    }
+
+    return {
+      message: 'Availability slots created successfully',
+      data: created,
+    };
+  }
+
+  async getTutorAvailabilities(tutorId: string) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+    const slots = await this.prisma.client.tutorAvailability.findMany({
+      where: { tutorId },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    const now = new Date();
+    const outdatedIds: string[] = [];
+    const filtered = slots.filter((slot) => {
+      const isOutdated = slot.scheduledAt < now && !slot.isBooked;
+      if (isOutdated) {
+        outdatedIds.push(slot.id);
+        return false;
+      }
+      return true;
+    });
+
+    if (outdatedIds.length > 0) {
+      this.prisma.client.tutorAvailability
+        .deleteMany({
+          where: { id: { in: outdatedIds } },
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Failed to asynchronously delete outdated slots for tutor ${tutorId}: ${err.message}`,
+            err.stack,
+          );
+        });
+    }
+
+    return { data: filtered };
+  }
+
+  async deleteTutorAvailability(tutorId: string, id: string) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+    const slot = await this.prisma.client.tutorAvailability.findFirst({
+      where: { id, tutorId },
+    });
+    if (!slot) {
+      throw new NotFoundException('Availability slot not found');
+    }
+    if (slot.isBooked) {
+      throw new BadRequestException('Cannot delete a booked availability slot');
+    }
+    await this.prisma.client.tutorAvailability.delete({
+      where: { id },
+    });
+    return {
+      message: 'Availability slot deleted successfully',
+    };
+  }
+
+  async getAvailableSlotsForStudent(tutorId: string) {
+    const slots = await this.prisma.client.tutorAvailability.findMany({
+      where: {
+        tutorId,
+        isBooked: false,
+      },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    const now = new Date();
+    const outdatedIds: string[] = [];
+    const filtered = [];
+
+    for (const slot of slots) {
+      if (slot.scheduledAt < now) {
+        outdatedIds.push(slot.id);
+        continue;
+      }
+
+      const overlap = await this.checkOverlap(
+        tutorId,
+        slot.scheduledAt,
+        slot.durationMinutes,
+      );
+      if (!overlap) {
+        filtered.push({
+          id: slot.id,
+          tutorId: slot.tutorId,
+          scheduledAt: slot.scheduledAt,
+          durationMinutes: slot.durationMinutes,
+        });
+      }
+    }
+
+    if (outdatedIds.length > 0) {
+      this.prisma.client.tutorAvailability
+        .deleteMany({
+          where: { id: { in: outdatedIds } },
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Failed to asynchronously delete outdated student slots for tutor ${tutorId}: ${err.message}`,
+            err.stack,
+          );
+        });
+    }
+
+    return { data: filtered };
+  }
+
+  private getTutorSearchWindow(dateFrom?: string, dateTo?: string) {
+    const now = new Date();
+    const from = dateFrom ? new Date(dateFrom) : now;
+    const to = dateTo
+      ? new Date(dateTo)
+      : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    return {
+      from: from < now ? now : from,
+      to,
+    };
+  }
+
+  private tutorSupportsLessonType(
+    tutorRoles: TutorSubRole[],
+    lessonType?: LessonType,
+  ) {
+    if (!lessonType || lessonType === LessonType.BOTH) {
+      return true;
+    }
+
+    if (lessonType === LessonType.REGULAR) {
+      return tutorRoles.includes(TutorSubRole.REGULAR);
+    }
+
+    if (lessonType === LessonType.CONVERSATION) {
+      return tutorRoles.includes(TutorSubRole.CONVERSATION);
+    }
+
+    return true;
+  }
+
+  private getTutorMatchScore(
+    tutor: { name: string | null },
+    bookings: Array<{ topic: string | null; note: string | null; tags: string[] }>,
+    search?: string,
+  ) {
+    if (!search?.trim()) {
+      return {
+        score: 0,
+        matchedFields: [] as string[],
+      };
+    }
+
+    const needle = search.trim().toLowerCase();
+    const matchedFields = new Set<string>();
+    let score = 0;
+    const tutorName = tutor.name?.toLowerCase() ?? '';
+
+    if (tutorName === needle) {
+      score += 100;
+      matchedFields.add('teacherName');
+    } else if (tutorName.includes(needle)) {
+      score += 75;
+      matchedFields.add('teacherName');
+    }
+
+    for (const booking of bookings) {
+      if (booking.topic?.toLowerCase().includes(needle)) {
+        score += 45;
+        matchedFields.add('title');
+      }
+      if (booking.tags.some((tag) => tag.toLowerCase().includes(needle))) {
+        score += 35;
+        matchedFields.add('tag');
+      }
+      if (booking.note?.toLowerCase().includes(needle)) {
+        score += 20;
+        matchedFields.add('description');
+      }
+    }
+
+    return {
+      score,
+      matchedFields: Array.from(matchedFields),
+    };
+  }
+
+  private compareNullableDates(
+    first: Date | null,
+    second: Date | null,
+    sortOrder: SortOrder = SortOrder.ASC,
+  ) {
+    if (!first && !second) return 0;
+    if (!first) return 1;
+    if (!second) return -1;
+    const diff = first.getTime() - second.getTime();
+    return sortOrder === SortOrder.DESC ? -diff : diff;
+  }
+
+  async searchTutorsForStudent(query: StudentTutorSearchQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const sortBy =
+      query.sortBy ??
+      (query.search ? StudentTutorSortBy.RELEVANCE : StudentTutorSortBy.NEXT_AVAILABLE);
+    const sortOrder =
+      query.sortOrder ??
+      (sortBy === StudentTutorSortBy.NEWEST ? SortOrder.DESC : SortOrder.ASC);
+    const { from, to } = this.getTutorSearchWindow(query.dateFrom, query.dateTo);
+
+    const tutorWhere: Prisma.UserWhereInput = {
+      role: UserRole.TUTOR,
+      status: UserStatus.ACTIVE,
+    };
+
+    const tutors = await this.prisma.client.user.findMany({
+      where: tutorWhere,
+      select: {
+        id: true,
+        name: true,
+        avatarUrl: true,
+        tutorRoles: true,
+        timeZone: true,
+        createdAt: true,
+      },
+    });
+
+    const tutorIds = tutors
+      .filter((tutor) =>
+        this.tutorSupportsLessonType(tutor.tutorRoles, query.lessonType),
+      )
+      .map((tutor) => tutor.id);
+
+    if (tutorIds.length === 0) {
+      return {
+        message: 'Tutors fetched successfully',
+        data: [],
+        meta: { total: 0, page, limit, totalPages: 0 },
+      };
+    }
+
+    const bookingLessonType =
+      query.lessonType && query.lessonType !== LessonType.BOTH
+        ? query.lessonType
+        : undefined;
+
+    const [availabilities, availableBookings] = await Promise.all([
+      this.prisma.client.tutorAvailability.findMany({
+        where: {
+          tutorId: { in: tutorIds },
+          isBooked: false,
+          scheduledAt: {
+            gte: from,
+            lte: to,
+          },
+        },
+        orderBy: { scheduledAt: 'asc' },
+      }),
+      this.prisma.client.booking.findMany({
+        where: {
+          tutorId: { in: tutorIds },
+          studentId: null,
+          status: BookingStatus.SCHEDULED,
+          scheduledAt: {
+            gte: from,
+            lte: to,
+          },
+          lessonType: bookingLessonType,
+        },
+        select: {
+          id: true,
+          tutorId: true,
+          topic: true,
+          note: true,
+          tags: true,
+          scheduledAt: true,
+          durationMinutes: true,
+          lessonType: true,
+        },
+        orderBy: { scheduledAt: 'asc' },
+      }),
+    ]);
+
+    const availabilityByTutor = new Map<string, typeof availabilities>();
+    for (const availability of availabilities) {
+      const group = availabilityByTutor.get(availability.tutorId) ?? [];
+      group.push(availability);
+      availabilityByTutor.set(availability.tutorId, group);
+    }
+
+    const bookingByTutor = new Map<string, typeof availableBookings>();
+    for (const booking of availableBookings) {
+      if (!booking.tutorId) continue;
+      const group = bookingByTutor.get(booking.tutorId) ?? [];
+      group.push(booking);
+      bookingByTutor.set(booking.tutorId, group);
+    }
+
+    const cards = tutors
+      .filter((tutor) => tutorIds.includes(tutor.id))
+      .map((tutor) => {
+        const tutorAvailabilities = availabilityByTutor.get(tutor.id) ?? [];
+        const tutorBookings = bookingByTutor.get(tutor.id) ?? [];
+        const allTimes = [
+          ...tutorAvailabilities.map((slot) => slot.scheduledAt),
+          ...tutorBookings
+            .map((booking) => booking.scheduledAt)
+            .filter((date): date is Date => !!date),
+        ].sort((a, b) => a.getTime() - b.getTime());
+        const match = this.getTutorMatchScore(tutor, tutorBookings, query.search);
+
+        return {
+          id: tutor.id,
+          name: tutor.name,
+          avatarUrl: tutor.avatarUrl,
+          tutorRoles: tutor.tutorRoles,
+          timeZone: tutor.timeZone,
+          nextAvailableSlot: allTimes[0] ?? null,
+          availableSlotCount: tutorAvailabilities.length + tutorBookings.length,
+          matchedFields: match.matchedFields,
+          relevanceScore: match.score,
+          createdAt: tutor.createdAt,
+        };
+      })
+      .filter((card) => {
+        if (query.hasAvailability && card.availableSlotCount === 0) {
+          return false;
+        }
+        if (query.search?.trim() && card.relevanceScore === 0) {
+          return false;
+        }
+        return true;
+      });
+
+    cards.sort((first, second) => {
+      if (sortBy === StudentTutorSortBy.RELEVANCE) {
+        const relevanceDiff = second.relevanceScore - first.relevanceScore;
+        if (relevanceDiff !== 0) return relevanceDiff;
+        return this.compareNullableDates(first.nextAvailableSlot, second.nextAvailableSlot);
+      }
+
+      if (sortBy === StudentTutorSortBy.NEWEST) {
+        const diff = first.createdAt.getTime() - second.createdAt.getTime();
+        return sortOrder === SortOrder.DESC ? -diff : diff;
+      }
+
+      return this.compareNullableDates(
+        first.nextAvailableSlot,
+        second.nextAvailableSlot,
+        sortOrder,
+      );
+    });
+
+    const total = cards.length;
+    const skip = (page - 1) * limit;
+    const data = cards.slice(skip, skip + limit).map(({ relevanceScore, createdAt, ...card }) => card);
+
+    return {
+      message: 'Tutors fetched successfully',
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getTutorScheduleForStudent(
+    tutorId: string,
+    query: StudentTutorScheduleQueryDto,
+  ) {
+    const tutor = await this.prisma.client.user.findFirst({
+      where: {
+        id: tutorId,
+        role: UserRole.TUTOR,
+        status: UserStatus.ACTIVE,
+      },
+      select: {
+        id: true,
+        name: true,
+        avatarUrl: true,
+        tutorRoles: true,
+        timeZone: true,
+      },
+    });
+
+    if (!tutor) {
+      throw new NotFoundException('Tutor not found');
+    }
+
+    const { from, to } = this.getTutorSearchWindow(query.dateFrom, query.dateTo);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const skip = (page - 1) * limit;
+    const bookingLessonType =
+      query.lessonType && query.lessonType !== LessonType.BOTH
+        ? query.lessonType
+        : undefined;
+
+    const [availabilities, scheduledClasses, scheduledTotal] =
+      await Promise.all([
+        this.prisma.client.tutorAvailability.findMany({
+          where: {
+            tutorId,
+            isBooked: false,
+            scheduledAt: {
+              gte: from,
+              lte: to,
+            },
+          },
+          orderBy: { scheduledAt: 'asc' },
+        }),
+        this.prisma.client.booking.findMany({
+          where: {
+            tutorId,
+            scheduledAt: {
+              gte: from,
+              lte: to,
+            },
+            lessonType: bookingLessonType,
+            status: {
+              in: [
+                BookingStatus.SCHEDULED,
+                BookingStatus.COMPLETED,
+                BookingStatus.CANCELLED,
+              ],
+            },
+          },
+          select: {
+            id: true,
+            scheduledAt: true,
+            durationMinutes: true,
+            lessonType: true,
+            status: true,
+            liveClassStatus: true,
+          },
+          orderBy: { scheduledAt: 'asc' },
+          skip,
+          take: limit,
+        }),
+        this.prisma.client.booking.count({
+          where: {
+            tutorId,
+            scheduledAt: {
+              gte: from,
+              lte: to,
+            },
+            lessonType: bookingLessonType,
+            status: {
+              in: [
+                BookingStatus.SCHEDULED,
+                BookingStatus.COMPLETED,
+                BookingStatus.CANCELLED,
+              ],
+            },
+          },
+        }),
+      ]);
+
+    return {
+      message: 'Tutor schedule fetched successfully',
+      data: {
+        tutor,
+        availabilities: availabilities.map((slot) => ({
+          id: slot.id,
+          tutorId: slot.tutorId,
+          scheduledAt: slot.scheduledAt,
+          durationMinutes: slot.durationMinutes,
+          isBookable: true,
+          status: 'AVAILABLE',
+        })),
+        scheduledClasses: scheduledClasses.map((booking) => ({
+          id: booking.id,
+          scheduledAt: booking.scheduledAt,
+          durationMinutes: booking.durationMinutes,
+          lessonType: booking.lessonType,
+          status: booking.status,
+          liveClassStatus: booking.liveClassStatus,
+          isBookable: false,
+        })),
+      },
+      meta: {
+        total: scheduledTotal,
+        page,
+        limit,
+        totalPages: Math.ceil(scheduledTotal / limit),
+      },
+    };
+  }
+
+  async studentBookAvailability(
+    studentId: string,
+    availabilityId: string,
+    dto: StudentBookAvailabilityDto,
+  ) {
+    await this.ensureUserRole(studentId, UserRole.STUDENT);
+
+    const bookingResult = await this.prisma.client.$transaction(async (tx) => {
+      const slot = await tx.tutorAvailability.findUnique({
+        where: { id: availabilityId },
+        include: {
+          tutor: true,
+        },
+      });
+
+      if (!slot) {
+        throw new NotFoundException('Availability slot not found');
+      }
+
+      if (slot.isBooked) {
+        throw new ConflictException('Availability slot is already booked');
+      }
+
+      if (slot.scheduledAt <= new Date()) {
+        throw new BadRequestException('Cannot book a slot in the past');
+      }
+
+      // Dynamic overlap check
+      const overlap = await this.checkOverlap(
+        slot.tutorId,
+        slot.scheduledAt,
+        slot.durationMinutes,
+        undefined,
+        tx,
+      );
+      if (overlap) {
+        throw new ConflictException({
+          message: 'This slot overlaps with another scheduled class',
+          conflictType: overlap.conflictType,
+          conflict: overlap.conflict,
+        });
+      }
+
+      // Check tutor sub-roles
+      const roles = slot.tutor.tutorRoles || [];
+      let finalLessonType: LessonType;
+
+      const hasRegular = roles.includes(TutorSubRole.REGULAR);
+      const hasConversation = roles.includes(TutorSubRole.CONVERSATION);
+
+      if (!hasRegular && !hasConversation) {
+        throw new ForbiddenException(
+          'Tutor does not have lesson teaching roles configured',
+        );
+      }
+
+      if (hasRegular && !hasConversation) {
+        finalLessonType = LessonType.REGULAR;
+      } else if (!hasRegular && hasConversation) {
+        finalLessonType = LessonType.CONVERSATION;
+      } else {
+        // Has both roles
+        if (!dto.lessonType) {
+          throw new BadRequestException(
+            'lessonType is required when tutor has both regular and conversation roles',
+          );
+        }
+        if (dto.lessonType === LessonType.BOTH) {
+          throw new BadRequestException(
+            'Cannot book BOTH as a single lesson type',
+          );
+        }
+        finalLessonType = dto.lessonType;
+      }
+
+      // Check credit balance
+      const creditBalance = await tx.studentCreditBalance.findUnique({
+        where: { studentId },
+      });
+      if (!creditBalance || creditBalance.totalCredits < 1) {
+        throw new BadRequestException('Student does not have enough credit');
+      }
+
+      // Deduct credit
+      await tx.studentCreditBalance.update({
+        where: { studentId },
+        data: {
+          totalCredits: { decrement: 1 },
+        },
+      });
+
+      const bookingId = randomUUID();
+
+      // Create Booking
+      const booking = await tx.booking.create({
+        data: {
+          id: bookingId,
+          studentId,
+          tutorId: slot.tutorId,
+          createdBy: BookingCreatedBy.STUDENT,
+          status: BookingStatus.SCHEDULED,
+          liveClassStatus: LiveClassStatus.SCHEDULED,
+          topic: `${slot.tutor.name || 'Tutor'}'s Availability Lesson`,
+          note: '',
+          tags: [],
+          scheduledAt: slot.scheduledAt,
+          durationMinutes: slot.durationMinutes,
+          isPackage: false,
+          lessonType: finalLessonType,
+          creditCost: 1,
+          creditDeductedAt: new Date(),
+          participants: {
+            create: {
+              studentId,
+            },
+          },
+        },
+      });
+
+      // Link availability
+      await tx.tutorAvailability.update({
+        where: { id: availabilityId },
+        data: {
+          isBooked: true,
+          bookingId,
+        },
+      });
+
+      return (
+        booking ??
+        (await tx.booking.findUnique({
+          where: { id: bookingId },
+        }))
+      );
+    });
+
+    if (!bookingResult) {
+      throw new BadRequestException('Booking could not be created');
+    }
+
+    // Send confirmation notification
+    await this.notificationService.createMany([studentId], {
+      type: 'BOOKING_SCHEDULED',
+      title: 'Booking confirmed',
+      message: `Your booking for ${bookingResult.topic || 'Class'} is confirmed.`,
+      data: {
+        bookingId: bookingResult.id,
+        scheduledAt: bookingResult.scheduledAt?.toISOString() ?? null,
+      },
+    });
+
+    await this.syncGoogleCalendar(bookingResult.id);
+
+    return {
+      message: 'Booking confirmed successfully',
+      data: {
+        bookingId: bookingResult.id,
+        studentIds: [studentId],
+        scheduledAt: bookingResult.scheduledAt,
+        status: bookingResult.status,
+        lessonType: bookingResult.lessonType,
+        creditDeducted: 1,
+      },
+    };
+  }
+
+  async generateTutorAvailability(
+    tutorId: string,
+    dto: TutorGenerateAvailabilityDto,
+  ) {
+    await this.ensureUserRole(tutorId, UserRole.TUTOR);
+
+    const start = new Date(dto.startDate);
+    const end = new Date(dto.endDate);
+    const durationMinutes = dto.durationMinutes ?? 50;
+
+    const [startH, startM] = dto.startTime.split(':').map(Number);
+    const [endH, endM] = dto.endTime.split(':').map(Number);
+
+    const created = [];
+    const current = new Date(start);
+    current.setHours(0, 0, 0, 0);
+
+    while (current <= end) {
+      const day = current.getDay();
+      if (dto.dayOfWeek.includes(day)) {
+        let currentHour = startH;
+        while (currentHour < endH) {
+          const slotTime = new Date(current);
+          slotTime.setHours(currentHour, startM, 0, 0);
+
+          const dbSlot = await this.prisma.client.tutorAvailability.create({
+            data: {
+              tutorId,
+              scheduledAt: slotTime,
+              durationMinutes,
+            },
+          });
+          created.push(dbSlot);
+
+          currentHour++;
+        }
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    return {
+      message: `Availability slots generated successfully. Created ${created.length} slots.`,
+      data: created,
     };
   }
 }

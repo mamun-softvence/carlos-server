@@ -118,9 +118,9 @@ Claims a single unbooked class slot (casual or recurring where `isPackage: false
   ```
 
 ### Book a Recurring Schedule Package
-Claims all future unbooked slots of a package recurring template in a single transaction.
+Claims the next unbooked package occurrence for a recurring template in a single transaction.
 * **Route**: `POST /student/bookings/package/:recurringScheduleId`
-* **Constraint**: Deducts 1 credit per session. Requires the student to have enough credits to cover all sessions in the package.
+* **Constraint**: Deducts 1 credit per session. Requires the student to have enough credits to cover all sessions in that package occurrence.
 * **cURL Request**:
   ```bash
   curl -X POST http://localhost:3000/api/v1/student/bookings/package/schedule-uuid-9999 \
@@ -148,7 +148,7 @@ Claims all future unbooked slots of a package recurring template in a single tra
   ```
 
 ### Batch Book Package/Casual Slots
-Claims multiple unbooked slots (useful for booking casual packages that lack a `recurringScheduleId` but share a `groupBookingId`) in a single transaction.
+Claims multiple unbooked slots (useful for booking casual packages or recurring occurrence packages that share a `groupBookingId`) in a single transaction.
 * **Route**: `POST /student/bookings/batch`
 * **Request Body**:
   * `bookingIds` (Required): Array of UUID strings representing the slots.
@@ -188,7 +188,7 @@ Claims multiple unbooked slots (useful for booking casual packages that lack a `
 ## 4. Retrieving Grouped Bookings
 
 ### Get My Bookings (Student List)
-Retrieve the student's scheduled bookings. Bookings belonging to a package (sharing `recurringScheduleId` or `groupBookingId` where `isPackage: true`) are automatically grouped into a single parent entity containing a nested `segments` array.
+Retrieve the student's scheduled bookings. Bookings belonging to a package occurrence (sharing `groupBookingId`, or legacy recurring package rows sharing `recurringScheduleId`) are automatically grouped into a single parent entity containing a nested `segments` array.
 * **Route**: `GET /student/bookings`
 * **cURL Request**:
   ```bash

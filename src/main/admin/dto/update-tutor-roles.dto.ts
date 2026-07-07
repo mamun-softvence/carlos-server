@@ -6,7 +6,8 @@ export class UpdateTutorRolesDto {
   @ApiProperty({
     enum: TutorSubRole,
     isArray: true,
-    description: 'The sub-roles assigned to the tutor (must contain at least one role)',
+    description:
+      'The sub-roles assigned to the tutor (must contain at least one role)',
     example: ['REGULAR', 'CONVERSATION'],
   })
   @IsArray()

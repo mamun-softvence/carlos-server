@@ -12,6 +12,7 @@ enum TutorSubRole {
 enum LessonType {
   REGULAR
   CONVERSATION
+  BOTH
 }
 
 enum AuthProvider {
@@ -118,6 +119,7 @@ model User {
 
   recurringSchedulesAsTutor   TutorRecurringSchedule[] @relation("TutorRecurringSchedules")
   recurringSchedulesAsStudent TutorRecurringSchedule[] @relation("StudentRecurringSchedules")
+  availabilities              TutorAvailability[]      @relation("TutorAvailabilities")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -173,6 +175,7 @@ model Booking {
   assignedByAdmin        User?                   @relation("AdminAssignedBookings", fields: [assignedByAdminId], references: [id], onDelete: SetNull)
   recurringSchedule      TutorRecurringSchedule? @relation(fields: [recurringScheduleId], references: [id], onDelete: SetNull) // Added recurringSchedule relation
   participants           BookingParticipant[]
+  availability           TutorAvailability?      @relation("BookingAvailability")
   liveClassMessages      LiveClassMessage[]
   competencyLogs         StudentLogCompetency[]
   tasks                  Task[]
@@ -546,6 +549,7 @@ model TutorRecurringSchedule {
   lastGeneratedUpTo  DateTime?
 
   occurrencesConfig  Json?
+  blockedDateRanges  Json?
 
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
@@ -557,4 +561,23 @@ model TutorRecurringSchedule {
   @@index([tutorId])
   @@index([isActive])
   @@map("tutor_recurring_schedules")
+}
+
+model TutorAvailability {
+  id              String   @id @default(uuid())
+  tutorId         String
+  scheduledAt     DateTime
+  durationMinutes Int      @default(50)
+  isBooked        Boolean  @default(false)
+  bookingId       String?  @unique
+
+  tutor           User     @relation("TutorAvailabilities", fields: [tutorId], references: [id], onDelete: Cascade)
+  booking         Booking? @relation("BookingAvailability", fields: [bookingId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tutorId])
+  @@index([scheduledAt])
+  @@map("tutor_availabilities")
 }

@@ -9,11 +9,19 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { CurrentUser, CurrentUserData } from '@/common/dto/current-user.decorator';
+import {
+  CurrentUser,
+  CurrentUserData,
+} from '@/common/dto/current-user.decorator';
 import { TutorScheduleService } from '../services/tutor-schedule.service';
 import { BookingService } from '../services/booking.service';
 import { BookingSchedulerService } from '../services/booking-scheduler.service';
@@ -21,6 +29,8 @@ import { TutorCreateRecurringScheduleDto } from '../dto/tutor-create-recurring-s
 import { TutorUpdateRecurringScheduleDto } from '../dto/tutor-update-recurring-schedule.dto';
 import { TutorCreateCasualBookingDto } from '../dto/tutor-create-casual-booking.dto';
 import { TutorCheckOverlapQueryDto } from '../dto/tutor-check-overlap-query.dto';
+import { TutorCreateAvailabilityDto } from '../dto/tutor-create-availability.dto';
+import { TutorGenerateAvailabilityDto } from '../dto/tutor-generate-availability.dto';
 
 @ApiTags('Tutor Scheduling')
 @ApiBearerAuth()
@@ -40,9 +50,21 @@ export class TutorScheduleController {
     @CurrentUser() user: CurrentUserData,
     @Body() dto: TutorCreateRecurringScheduleDto,
   ) {
-    const result = await this.tutorScheduleService.createSchedule(user.userId, dto);
+    const result = await this.tutorScheduleService.createSchedule(
+      user.userId,
+      dto,
+    );
     await this.bookingSchedulerService.generateBookingsForSchedule(result.data);
-    return result;
+    const bookings = await this.tutorScheduleService.getBookingsForSchedule(
+      result.data.id,
+    );
+    return {
+      ...result,
+      data: {
+        ...result.data,
+        bookings,
+      },
+    };
   }
 
   @Get('recurring-schedules')
@@ -66,7 +88,10 @@ export class TutorScheduleController {
     @CurrentUser() user: CurrentUserData,
     @Param('id') id: string,
   ) {
-    const dates = await this.tutorScheduleService.previewSchedule(user.userId, id);
+    const dates = await this.tutorScheduleService.previewSchedule(
+      user.userId,
+      id,
+    );
     return {
       message: 'Schedule dates preview computed successfully',
       data: dates,
@@ -84,7 +109,9 @@ export class TutorScheduleController {
   }
 
   @Delete('recurring-schedules/:id')
-  @ApiOperation({ summary: 'Delete a recurring schedule template and clean up unbooked slots' })
+  @ApiOperation({
+    summary: 'Delete a recurring schedule template and clean up unbooked slots',
+  })
   deleteSchedule(
     @CurrentUser() user: CurrentUserData,
     @Param('id') id: string,
@@ -108,7 +135,10 @@ export class TutorScheduleController {
   }
 
   @Get('bookings/check-overlap')
-  @ApiOperation({ summary: 'Check if a specific slot overlaps with bookings or recurring templates' })
+  @ApiOperation({
+    summary:
+      'Check if a specific slot overlaps with bookings or recurring templates',
+  })
   @ApiQuery({ type: TutorCheckOverlapQueryDto })
   async checkOverlap(
     @CurrentUser() user: CurrentUserData,
@@ -145,5 +175,42 @@ export class TutorScheduleController {
     return {
       message: 'Booking generation triggered successfully',
     };
+  }
+
+  @Post('availabilities')
+  @ApiOperation({ summary: 'Create one or more availability slots' })
+  createAvailability(
+    @CurrentUser() user: CurrentUserData,
+    @Body() dto: TutorCreateAvailabilityDto,
+  ) {
+    return this.bookingService.createTutorAvailability(user.userId, dto);
+  }
+
+  @Get('availabilities')
+  @ApiOperation({
+    summary: 'List all availability slots created by current tutor',
+  })
+  getAvailabilities(@CurrentUser() user: CurrentUserData) {
+    return this.bookingService.getTutorAvailabilities(user.userId);
+  }
+
+  @Delete('availabilities/:id')
+  @ApiOperation({ summary: 'Delete an unbooked availability slot' })
+  deleteAvailability(
+    @CurrentUser() user: CurrentUserData,
+    @Param('id') id: string,
+  ) {
+    return this.bookingService.deleteTutorAvailability(user.userId, id);
+  }
+
+  @Post('availabilities/generate')
+  @ApiOperation({
+    summary: 'Bulk generate availability slots for a date range',
+  })
+  generateAvailability(
+    @CurrentUser() user: CurrentUserData,
+    @Body() dto: TutorGenerateAvailabilityDto,
+  ) {
+    return this.bookingService.generateTutorAvailability(user.userId, dto);
   }
 }

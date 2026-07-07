@@ -12,6 +12,7 @@ async function bootstrap() {
       'http://localhost:3000', // your frontend
       'http://localhost:3001',
       'http://localhost:5173',
+      'https://ubiquitous-bunny-9162e2.netlify.app',
     ],
     credentials: true,
   });

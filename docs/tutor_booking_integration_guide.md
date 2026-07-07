@@ -80,6 +80,7 @@ Before creating a casual booking or a recurring template, check if the proposed 
 
 ### Create a Recurring Schedule Template
 Adds a recurring schedule template slot with optional syllabus configuration (`occurrencesConfig`). The backend automatically calculates the exact `startDate` based on your timing configurations.
+When the template is created, the backend immediately materializes matching `Booking` rows within `openingWindowDays`; tutors do not need to wait for the first cron run.
 * **Route**: `POST /tutor/recurring-schedules`
 * **Request Parameters**:
   * `frequency` (Required): `"DAILY" | "WEEKLY" | "BIWEEKLY" | "MONTHLY"`.
@@ -89,17 +90,22 @@ Adds a recurring schedule template slot with optional syllabus configuration (`o
   * `startFromDate` (Optional): ISO-8601 Date-time string indicating the starting point (e.g. `"2026-07-04T00:00:00.000Z"`). Defaults to current date.
   * `endDate` (Optional): ISO-8601 Date-time string indicating when the recurring cycle ends.
   * `durationHours` (Required): Class length: `1` to `5` hours. Generates separate 50-minute booking sessions.
-  * `isPackage` (Optional): Boolean. If `true` (default), all generated bookings must be booked together.
+  * `isPackage` (Optional): Boolean. If `true` (default), adjacent hourly segments for the same occurrence must be booked together.
   * `openingWindowDays` (Required): Any integer between `1` and `2000`.
   * `studentId` (Optional): UUID of a pre-booked student. If `null`, this acts as an **open slot**.
   * `title` (Optional): Topic of generated classes.
   * `description` (Optional): Info notes.
   * `tags` (Optional): Array of string labels.
+  * `lessonType` (Optional): `"REGULAR" | "CONVERSATION" | "BOTH"`. Defaults to `"REGULAR"`.
+  * `blockedDateRanges` (Optional): JSON Array of date range objects where bookings should NOT be generated:
+    * `startDate` (Required): `"YYYY-MM-DD"` format (e.g. `"2026-07-10"`).
+    * `endDate` (Required): `"YYYY-MM-DD"` format (e.g. `"2026-07-15"`).
   * `occurrencesConfig` (Optional): JSON Array of occurrence configurations:
     * `scheduledAt` (Required): ISO-8601 Datetime string representing the exact class time.
     * `title` (Optional): Specific topic for this class.
     * `description` (Optional): Specific description for this class.
     * `tags` (Optional): Specific array of string labels for this class.
+    * `lessonType` (Optional): `"REGULAR" | "CONVERSATION" | "BOTH"`. Overrides the schedule-level setting for this occurrence.
 * **cURL Request**:
   ```bash
   curl -X POST http://localhost:3000/api/v1/tutor/recurring-schedules \
@@ -117,17 +123,26 @@ Adds a recurring schedule template slot with optional syllabus configuration (`o
       "title": "Physics Lab",
       "description": "Weekly lab session",
       "tags": ["Physics", "Lab"],
+      "lessonType": "BOTH",
+      "blockedDateRanges": [
+        {
+          "startDate": "2026-07-20",
+          "endDate": "2026-07-25"
+        }
+      ],
       "occurrencesConfig": [
         { 
           "scheduledAt": "2026-07-08T14:00:00.000Z",
           "title": "Lab 1: Vectors", 
           "description": "Forces & vector math",
-          "tags": ["Physics", "Vectors"]
+          "tags": ["Physics", "Vectors"],
+          "lessonType": "REGULAR"
         },
         { 
           "scheduledAt": "2026-07-15T14:00:00.000Z",
           "title": "Lab 2: Acceleration", 
-          "description": "Gravity & free fall experiments"
+          "description": "Gravity & free fall experiments",
+          "lessonType": "CONVERSATION"
         }
       ]
     }'
@@ -151,25 +166,46 @@ Adds a recurring schedule template slot with optional syllabus configuration (`o
       "endDate": "2026-08-31T23:59:59.000Z",
       "durationHours": 3,
       "isPackage": true,
+      "lessonType": "BOTH",
       "openingWindowDays": 30,
       "isActive": true,
+      "blockedDateRanges": [
+        {
+          "startDate": "2026-07-20",
+          "endDate": "2026-07-25"
+        }
+      ],
       "lastGeneratedUpTo": null,
       "occurrencesConfig": [
         { 
           "scheduledAt": "2026-07-08T14:00:00.000Z",
           "title": "Lab 1: Vectors", 
           "description": "Forces & vector math",
-          "tags": ["Physics", "Vectors"]
+          "tags": ["Physics", "Vectors"],
+          "lessonType": "REGULAR"
         },
         { 
           "scheduledAt": "2026-07-15T14:00:00.000Z",
           "title": "Lab 2: Acceleration", 
           "description": "Gravity & free fall experiments",
-          "tags": null
+          "tags": null,
+          "lessonType": "CONVERSATION"
         }
       ],
       "createdAt": "2026-07-04T08:50:00.000Z",
-      "updatedAt": "2026-07-04T08:50:00.000Z"
+      "updatedAt": "2026-07-04T08:50:00.000Z",
+      "bookings": [
+        {
+          "id": "booking-uuid-0001",
+          "recurringScheduleId": "schedule-uuid-9999",
+          "tutorBookingType": "RECURRING",
+          "status": "SCHEDULED",
+          "scheduledAt": "2026-07-08T14:00:00.000Z",
+          "durationMinutes": 50,
+          "isPackage": true,
+          "lessonType": "REGULAR"
+        }
+      ]
     }
   }
   ```
@@ -220,7 +256,7 @@ Update a recurring slot configuration, syllabus, or deactivate it.
 
 * **Route**: `PATCH /tutor/recurring-schedules/:id`
 * **Syncing Behavior**:
-  * **Timing Changes** (`startDate`, `frequency`, `durationMinutes`): Cleans up all future unbooked generated bookings (`studentId IS NULL` and `scheduledAt > NOW`) and triggers fresh slot generation under the new timing.
+  * **Timing/Structural Changes** (`startDate`, `frequency`, `durationMinutes`, `lessonType`): Cleans up all future unbooked generated bookings (`studentId IS NULL` and `scheduledAt > NOW`) and triggers fresh slot generation.
   * **Content Changes** (`title`, `description`, `tags`, `occurrencesConfig`): Automatically updates all future unbooked generated bookings with the new text or syllabus mapping. Passing `occurrencesConfig` fully replaces the existing syllabus array.
 * **cURL Request (Content Sync Example)**:
   ```bash
@@ -260,6 +296,7 @@ Schedules one or more back-to-back one-off class slots directly. Bypasses admin 
   * `title` (Optional): Topic.
   * `description` (Optional): Notes.
   * `tags` (Optional): Array of strings.
+  * `lessonType` (Optional): `"REGULAR" | "CONVERSATION" | "BOTH"`. Defaults to `"REGULAR"`.
 * **cURL Request**:
   ```bash
   curl -X POST http://localhost:3000/api/v1/tutor/bookings/casual \
@@ -337,7 +374,7 @@ Schedules one or more back-to-back one-off class slots directly. Bypasses admin 
 
 ## 5. Testing the Booking Generator (Cron Bypass)
 
-Exposes an endpoint to trigger the daily cron generation logic manually. This allows developers to verify that recurring schedules create the corresponding database `Booking` items instantly.
+Exposes an endpoint to trigger the daily cron generation logic manually. Schedule creation already generates matching `Booking` rows inside `openingWindowDays`; later cron runs use the same idempotent generator to extend or fill the opening window without duplicating existing bookings.
 * **Route**: `POST /tutor/bookings/trigger-generator`
 * **cURL Request**:
   ```bash
@@ -462,7 +499,7 @@ Claims a single unbooked class slot (casual or recurring where `isPackage: false
   ```
 
 ### Book a Recurring Schedule Package
-Claims all future unbooked slots of a package recurring template in a single transaction.
+Claims the next unbooked package occurrence of a recurring template in a single transaction.
 * **Route**: `POST /student/bookings/package/:recurringScheduleId`
 * **Constraint**: Deducts 1 credit per session. Requires the student to have enough credits to cover all sessions in the package. Maximum slots of a package is limited to 5.
 * **cURL Request**:
@@ -494,5 +531,142 @@ Claims all future unbooked slots of a package recurring template in a single tra
         "creditCost": 1
       }
     ]
+  }
+
+---
+
+## 9. Tutor Availability Slots & Student Booking
+
+### Create Tutor Availability Slots
+Tutors can open one or more availability slots for students to book.
+* **Route**: `POST /tutor/availabilities`
+* **Request Body**:
+  ```json
+  {
+    "slots": [
+      { "scheduledAt": "2026-07-15T10:00:00.000Z", "durationMinutes": 50 }
+    ]
+  }
+  ```
+* **Response Sample (201 Created)**:
+  ```json
+  {
+    "message": "Availability slots created successfully",
+    "data": [
+      {
+        "id": "slot-uuid-123",
+        "tutorId": "tutor-uuid-1111",
+        "scheduledAt": "2026-07-15T10:00:00.000Z",
+        "durationMinutes": 50,
+        "isBooked": false,
+        "bookingId": null
+      }
+    ]
+  }
+  ```
+
+### Bulk Generate Tutor Availability Slots
+Tutors can bulk-generate availability slots automatically for a range of dates and times.
+* **Route**: `POST /tutor/availabilities/generate`
+* **Request Body**:
+  ```json
+  {
+    "startDate": "2026-07-10T00:00:00.000Z",
+    "endDate": "2026-07-20T00:00:00.000Z",
+    "startTime": "15:00",
+    "endTime": "17:00",
+    "dayOfWeek": [1, 2, 3, 4],
+    "durationMinutes": 50
+  }
+  ```
+* **Response Sample (201 Created)**:
+  ```json
+  {
+    "message": "Availability slots generated successfully. Created 8 slots.",
+    "data": [
+      {
+        "id": "slot-uuid-1",
+        "tutorId": "tutor-uuid-1111",
+        "scheduledAt": "2026-07-13T15:00:00.000Z",
+        "durationMinutes": 50,
+        "isBooked": false,
+        "bookingId": null
+      }
+    ]
+  }
+  ```
+
+### List Tutor Availability Slots
+Tutors can list all their availability slots.
+* **Route**: `GET /tutor/availabilities`
+* **Response Sample (200 OK)**:
+  ```json
+  {
+    "data": [
+      {
+        "id": "slot-uuid-123",
+        "tutorId": "tutor-uuid-1111",
+        "scheduledAt": "2026-07-15T10:00:00.000Z",
+        "durationMinutes": 50,
+        "isBooked": false,
+        "bookingId": null
+      }
+    ]
+  }
+  ```
+
+### Delete Tutor Availability Slot
+Allows a tutor to delete an unbooked availability slot.
+* **Route**: `DELETE /tutor/availabilities/:id`
+* **Response Sample (200 OK)**:
+  ```json
+  {
+    "message": "Availability slot deleted successfully"
+  }
+  ```
+
+### Search Tutor Availability Slots (Student View)
+Allows a student to retrieve all active (unbooked, future, and non-overlapping) availability slots for a specific tutor.
+* **Route**: `GET /student/tutors/:tutorId/availabilities`
+* **Response Sample (200 OK)**:
+  ```json
+  {
+    "data": [
+      {
+        "id": "slot-uuid-123",
+        "tutorId": "tutor-uuid-1111",
+        "scheduledAt": "2026-07-15T10:00:00.000Z",
+        "durationMinutes": 50
+      }
+    ]
+  }
+  ```
+
+### Book Tutor Availability Slot (Student Booking)
+Allows a student to book a tutor's availability slot.
+* **Route**: `POST /student/availabilities/:id/book`
+* **Request Body**:
+  * `lessonType` (Required if tutor has both REGULAR and CONVERSATION roles): `"REGULAR" | "CONVERSATION"`.
+* **cURL Request**:
+  ```bash
+  curl -X POST http://localhost:3000/api/v1/student/availabilities/slot-uuid-123/book \
+    -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "lessonType": "CONVERSATION"
+    }'
+  ```
+* **Response Sample (200 OK)**:
+  ```json
+  {
+    "message": "Booking confirmed successfully",
+    "data": {
+      "bookingId": "booking-uuid-xyz",
+      "studentIds": ["student-uuid-8888"],
+      "scheduledAt": "2026-07-15T10:00:00.000Z",
+      "status": "SCHEDULED",
+      "lessonType": "CONVERSATION",
+      "creditDeducted": 1
+    }
   }
   ```

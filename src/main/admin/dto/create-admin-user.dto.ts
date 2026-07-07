@@ -51,7 +51,8 @@ export class CreateAdminUserDto {
     enum: TutorSubRole,
     isArray: true,
     required: false,
-    description: 'The sub-roles assigned to the tutor (only applicable for TUTOR role)',
+    description:
+      'The sub-roles assigned to the tutor (only applicable for TUTOR role)',
     example: ['REGULAR', 'CONVERSATION'],
   })
   @IsOptional()

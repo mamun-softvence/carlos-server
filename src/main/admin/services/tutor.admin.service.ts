@@ -68,7 +68,9 @@ export class TutorAdminService {
     if (isTutor) {
       if (tutorRoles !== undefined) {
         if (!Array.isArray(tutorRoles) || tutorRoles.length === 0) {
-          throw new BadRequestException('A teacher must have at least one role assigned');
+          throw new BadRequestException(
+            'A teacher must have at least one role assigned',
+          );
         }
         for (const r of tutorRoles) {
           if (!Object.values(TutorSubRole).includes(r)) {

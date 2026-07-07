@@ -571,15 +571,21 @@ export class StudentService {
     const packageGroups = new Map<string, any>();
 
     for (const booking of bookings) {
-      if (booking.isPackage && (booking.recurringScheduleId || booking.groupBookingId)) {
-        const groupKey = (booking.recurringScheduleId || booking.groupBookingId) as string;
+      if (
+        booking.isPackage &&
+        (booking.groupBookingId || booking.recurringScheduleId)
+      ) {
+        const groupKey = (booking.groupBookingId ||
+          booking.recurringScheduleId) as string;
         if (!packageGroups.has(groupKey)) {
           const packageObj = {
             id: booking.id,
             isPackage: true,
             recurringScheduleId: booking.recurringScheduleId,
             groupBookingId: booking.groupBookingId,
-            topic: booking.topic ? booking.topic.replace(/\s*\(Session \d+\/\d+\)$/, '') : 'Class Package',
+            topic: booking.topic
+              ? booking.topic.replace(/\s*\(Session \d+\/\d+\)$/, '')
+              : 'Class Package',
             note: booking.note,
             tags: booking.tags,
             tutorBookingType: booking.tutorBookingType,
@@ -606,7 +612,10 @@ export class StudentService {
           // Update scheduledAt to the earliest slot
           packageObj.scheduledAt = packageObj.segments[0].scheduledAt;
           // Calculate sum of durationMinutes of segments
-          packageObj.durationMinutes = packageObj.segments.reduce((sum: number, seg: any) => sum + (seg.durationMinutes || 0), 0);
+          packageObj.durationMinutes = packageObj.segments.reduce(
+            (sum: number, seg: any) => sum + (seg.durationMinutes || 0),
+            0,
+          );
         }
       } else {
         groupedBookings.push(booking);
@@ -640,14 +649,15 @@ export class StudentService {
     }
 
     if (booking.isPackage) {
-      const groupKey = booking.recurringScheduleId || booking.groupBookingId;
+      const groupKey = booking.groupBookingId || booking.recurringScheduleId;
       if (groupKey) {
         const orConditions: Prisma.BookingWhereInput[] = [];
-        if (booking.recurringScheduleId) {
-          orConditions.push({ recurringScheduleId: booking.recurringScheduleId });
-        }
         if (booking.groupBookingId) {
           orConditions.push({ groupBookingId: booking.groupBookingId });
+        } else if (booking.recurringScheduleId) {
+          orConditions.push({
+            recurringScheduleId: booking.recurringScheduleId,
+          });
         }
 
         const segments = await this.prisma.client.booking.findMany({

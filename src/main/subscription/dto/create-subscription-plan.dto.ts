@@ -1,12 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsIn,
   IsNotEmpty,
   IsNumberString,
   IsObject,
   IsOptional,
   IsString,
-  MinLength,
 } from 'class-validator';
 
 export class CreateSubscriptionPlanDto {
@@ -57,4 +57,23 @@ export class CreateSubscriptionPlanDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({
+    example: 'usd',
+    required: false,
+    description: 'Stripe currency code',
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiProperty({
+    example: 'month',
+    required: false,
+    enum: ['day', 'week', 'month', 'year'],
+    description: 'Stripe recurring billing interval',
+  })
+  @IsOptional()
+  @IsIn(['day', 'week', 'month', 'year'])
+  billingInterval?: 'day' | 'week' | 'month' | 'year';
 }

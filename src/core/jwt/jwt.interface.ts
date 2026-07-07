@@ -1,20 +1,18 @@
-
-import { UserRole } from "@prisma/client"
-import { Request } from "express"
+import { UserRole } from '@prisma/client';
+import { Request } from 'express';
 
 export interface JWTPayload {
-    sub: string,
-    email: string,
-    role: UserRole
-
+  sub: string;
+  email: string;
+  role: UserRole;
 }
 
 export interface RequestWithUser extends Request {
-    user?: JWTPayload
+  user?: JWTPayload;
 }
 
 export type TokenPair = {
-    accessToken: string;
-    refreshToken: string;
-    refreshTokenExpiresAt: Date;
-}
+  accessToken: string;
+  refreshToken: string;
+  refreshTokenExpiresAt: Date;
+};

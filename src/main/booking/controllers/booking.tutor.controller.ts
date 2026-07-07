@@ -22,11 +22,14 @@ export class BookingTutorController {
     type: TutorCreateBookingDto,
     examples: {
       tutorCreateBooking: {
-        summary: 'Tutor schedules a class for a student',
+        summary: 'Tutor schedules a class for multiple students',
         value: {
-          studentId: '4b572b45-238e-4011-b3e2-da75fb7a0a44',
+          studentIds: [
+            '4b572b45-238e-4011-b3e2-da75fb7a0a44',
+            '70a24771-98df-441f-ad2b-79ab2fe8fd63',
+          ],
           scheduledAt: '2026-04-12T14:00:00.000Z',
-          durationMinutes: 60,
+          durationMinutes: 50,
           topic: 'Physics Problem Solving Session',
           note: 'Cover motion equations, vectors, and exam practice.',
         },

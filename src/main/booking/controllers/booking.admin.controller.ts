@@ -34,7 +34,7 @@ export class BookingAdminController {
         value: {
           tutorId: '7c8c8f71-9d23-4f17-bc95-6a2a7bbf6c31',
           scheduledAt: '2026-04-10T13:00:00.000Z',
-          durationMinutes: 60,
+          durationMinutes: 50,
           topic: 'Higher Math Revision Session',
           note: 'Focus on integration and exam preparation.',
         },

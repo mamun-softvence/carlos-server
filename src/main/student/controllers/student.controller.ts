@@ -4,7 +4,15 @@ import {
 } from '@/common/dto/current-user.decorator';
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { Body, Controller, Get, Patch, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { StudentBookingQueryDto } from '../dto/student-booking-query.dto';
@@ -19,6 +27,24 @@ import { StudentService } from '../services/student.service';
 export class StudentController {
   constructor(private readonly studentService: StudentService) {}
 
+  @Get('mydata')
+  @ApiOperation({ summary: 'Get authenticated student dashboard summary' })
+  getMyData(@CurrentUser() user: CurrentUserData) {
+    return this.studentService.getMyData(user.userId);
+  }
+
+  @Get('credit-history')
+  @ApiOperation({ summary: 'Get authenticated student credit history' })
+  getMyCreditHistory(@CurrentUser() user: CurrentUserData) {
+    return this.studentService.getMyCreditHistory(user.userId);
+  }
+
+  @Get('overview')
+  @ApiOperation({ summary: 'Get authenticated student overview statistics' })
+  getMyOverview(@CurrentUser() user: CurrentUserData) {
+    return this.studentService.getMyOverview(user.userId);
+  }
+
   @Get('bookings')
   @ApiOperation({
     summary:
@@ -29,6 +55,17 @@ export class StudentController {
     @Query() query: StudentBookingQueryDto,
   ) {
     return this.studentService.getMyBookings(user.userId, query);
+  }
+
+  @Get('bookings/:id')
+  @ApiOperation({
+    summary: 'Get booking/package details for student including all segments',
+  })
+  getBookingDetails(
+    @CurrentUser() user: CurrentUserData,
+    @Param('id') bookingId: string,
+  ) {
+    return this.studentService.getBookingDetails(user.userId, bookingId);
   }
 
   @Get('credits')

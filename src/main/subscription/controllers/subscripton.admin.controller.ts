@@ -42,6 +42,8 @@ export class SubscriptionAdminController {
             sessionsPerMonth: 8,
             support: 'email',
           },
+          currency: 'usd',
+          billingInterval: 'month',
           isActive: true,
         },
       },
@@ -58,6 +60,12 @@ export class SubscriptionAdminController {
     return this.subscriptionAdminService.getSubscriptions();
   }
 
+  @Get('history')
+  @ApiOperation({ summary: 'Get student subscription and payment history' })
+  getSubscriptionHistory() {
+    return this.subscriptionAdminService.getSubscriptionHistory();
+  }
+
   @Patch(':subscriptionId')
   @ApiOperation({ summary: 'Update subscription plan' })
   @ApiBody({
@@ -69,6 +77,8 @@ export class SubscriptionAdminController {
           name: 'Premium Plan',
           price: '999.00',
           creditsPerMonth: '12',
+          currency: 'usd',
+          billingInterval: 'month',
           isActive: true,
         },
       },

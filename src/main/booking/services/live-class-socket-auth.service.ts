@@ -21,7 +21,9 @@ export class LiveClassSocketAuthService {
     const authHeader = client.handshake.headers.authorization;
     const rawToken =
       handshakeAuth?.token ??
-      (typeof authHeader === 'string' ? authHeader.replace(/^Bearer\s+/i, '') : undefined);
+      (typeof authHeader === 'string'
+        ? authHeader.replace(/^Bearer\s+/i, '')
+        : undefined);
 
     if (!rawToken) {
       throw new UnauthorizedException('Socket token is required');

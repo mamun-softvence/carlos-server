@@ -1,23 +1,32 @@
 import {
+  ArrayMinSize,
+  ArrayUnique,
+  Equals,
   IsDateString,
+  IsArray,
   IsInt,
   IsOptional,
   IsString,
   IsUUID,
-  Max,
-  Min,
 } from 'class-validator';
 
 export class TutorCreateBookingDto {
+  @IsOptional()
   @IsUUID()
-  studentId!: string;
+  studentId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  studentIds?: string[];
 
   @IsDateString()
   scheduledAt!: string;
 
   @IsInt()
-  @Min(1)
-  @Max(300)
+  @Equals(50, { message: 'durationMinutes must be 50' })
   durationMinutes!: number;
 
   @IsOptional()

@@ -1,8 +1,17 @@
 import { Roles } from '@/common/dto/roles.decorator';
 import { JwtAuthGuard, RolesGuard } from '@/core/jwt/jwt.guard';
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Param,
+  Post,
+  UseGuards,
+  Patch,
+} from '@nestjs/common';
 import { TutorAdminService } from '../services/tutor.admin.service';
 import { CreateAdminUserDto } from '../dto/create-admin-user.dto';
+import { UpdateTutorRolesDto } from '../dto/update-tutor-roles.dto';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -46,5 +55,29 @@ export class TutorAdminController {
   })
   createUser(@Body() dto: CreateAdminUserDto) {
     return this.tutorAdminService.createUser(dto);
+  }
+
+  @ApiBearerAuth()
+  @Delete(':userId')
+  @ApiOperation({
+    summary: 'Delete student or tutor',
+    description:
+      'Admin can permanently delete a student or tutor account. Admin accounts cannot be deleted from this route.',
+  })
+  deleteUser(@Param('userId') userId: string) {
+    return this.tutorAdminService.deleteUser(userId);
+  }
+
+  @ApiBearerAuth()
+  @Patch('tutors/:tutorId/roles')
+  @ApiOperation({
+    summary: 'Update tutor sub-roles',
+    description: 'Admin can add, change, or remove sub-roles of a teacher.',
+  })
+  updateTutorRoles(
+    @Param('tutorId') tutorId: string,
+    @Body() dto: UpdateTutorRolesDto,
+  ) {
+    return this.tutorAdminService.updateTutorRoles(tutorId, dto);
   }
 }
